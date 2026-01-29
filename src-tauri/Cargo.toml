@@ -1,0 +1,23 @@
+[package]
+name = "adp-ui-designer"
+version = "1.0.0"
+description = "ADP UI Designer"
+authors = ["ADP Team"]
+license = ""
+repository = ""
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
+
+[dependencies]
+tauri = { version = "1.6", features = [ "shell-open", "dialog-open", "shell-execute", "shell-open-api"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["sync"] }
+chrono = "0.4"
+include_dir = "0.7"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

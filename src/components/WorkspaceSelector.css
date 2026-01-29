@@ -1,0 +1,50 @@
+.workspace-selector-modal {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+.workspace-selector-modal .arco-modal-header {
+  border-bottom: 1px solid var(--color-border-2);
+  padding-bottom: 16px;
+}
+
+.workspace-selector-modal .arco-modal-body {
+  padding: 20px 0;
+}
+
+.workspace-selector-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.path-selector-card {
+  background-color: var(--color-fill-1);
+  border: 1px solid var(--color-border-2);
+}
+
+.path-selector-card .arco-card-body {
+  padding: 20px;
+}
+
+.workspace-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border-2);
+}
+
+.workspace-selector-content .arco-alert {
+  margin-bottom: 0;
+}
+
+.workspace-selector-content .arco-input-wrapper {
+  width: 100%;
+}
+
+.workspace-selector-content .arco-input-addafter {
+  padding: 0;
+}
+
+.workspace-selector-content .arco-btn-outline {
+  border-radius: 0 4px 4px 0;
+}

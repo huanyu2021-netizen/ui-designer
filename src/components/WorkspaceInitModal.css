@@ -1,0 +1,104 @@
+.workspace-init-modal .arco-modal-body {
+  padding: 24px;
+}
+
+.init-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.init-header {
+  text-align: center;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.progress-section {
+  padding: 16px 0;
+}
+
+.steps-list {
+  background: var(--color-fill-2);
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.steps-list .arco-list-item {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border-2);
+  transition: background-color 0.2s;
+}
+
+.steps-list .arco-list-item:last-child {
+  border-bottom: none;
+}
+
+.steps-list .arco-list-item:hover {
+  background-color: var(--color-fill-3);
+}
+
+.step-item {
+  display: flex;
+  align-items: center;
+}
+
+.step-icon-wrapper {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.step-icon-pending {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--color-border-3);
+  border-radius: 50%;
+  background: var(--color-fill-2);
+}
+
+.step-icon-running {
+  font-size: 20px;
+  color: rgb(var(--primary-6));
+  animation: spin 1s linear infinite;
+}
+
+.step-icon-success {
+  font-size: 20px;
+  color: rgb(var(--success-6));
+}
+
+.step-icon-error {
+  font-size: 20px;
+  color: rgb(var(--danger-6));
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.step-content {
+  flex: 1;
+}
+
+.step-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: center;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border-2);
+}

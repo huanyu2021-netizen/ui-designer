@@ -1,0 +1,59 @@
+{
+  "name": "@monorepo/uci",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "watch": "rslib build --watch",
+    "build": "rslib build",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "test": "vitest run src/env/__tests__/env.test.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.202.0",
+    "@opentelemetry/instrumentation": "^0.202.0",
+    "@opentelemetry/instrumentation-fetch": "^0.202.0",
+    "@opentelemetry/instrumentation-xml-http-request": "^0.202.0",
+    "@opentelemetry/resources": "^2.0.1",
+    "@opentelemetry/sdk-trace-web": "^2.0.1",
+    "axios": "^1.8.4",
+    "axios-retry": "^4.5.0",
+    "downloadjs": "^1.4.7",
+    "events": "^3.3.0",
+    "gm-crypto": "^0.1.12",
+    "i18next": "^25.0.1",
+    "idb": "^8.0.2",
+    "lodash": "^4.17.21",
+    "qs": "^6.14.0",
+    "sm-crypto": "^0.3.13"
+  },
+  "devDependencies": {
+    "@rslib/core": "^0.13.3",
+    "@types/downloadjs": "^1.4.6",
+    "@types/events": "^3.0.3",
+    "@types/gm": "^1.25.4",
+    "@types/lodash": "^4.17.16",
+    "@types/node": "^22.17.2",
+    "@types/qs": "^6.14.0",
+    "@types/sm-crypto": "^0.3.4",
+    "fake-indexeddb": "^6.0.1",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

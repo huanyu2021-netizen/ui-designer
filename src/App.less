@@ -1,0 +1,191 @@
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #fafafa;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+.app-header {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  padding: 16px 24px;
+}
+
+.header-content {
+  max-width: 1400px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.title-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.app-title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.5px;
+}
+
+.workspace-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #666;
+}
+
+.workspace-label {
+  font-weight: 500;
+  color: #999;
+}
+
+.workspace-path {
+  color: #667eea;
+  font-weight: 600;
+  padding: 2px 8px;
+  background: rgba(102, 126, 234, 0.1);
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+
+.placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px;
+}
+
+.placeholder-icon {
+  font-size: 64px;
+  opacity: 0.8;
+}
+
+.placeholder-text {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.placeholder-subtext {
+  font-size: 14px;
+  margin: 0;
+}
+
+.init-progress-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  padding: 60px 40px;
+  background: rgba(255, 255, 255, 0.95);
+  margin: 40px;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+.init-progress-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.init-progress-section {
+  width: 100%;
+  max-width: 500px;
+  padding: 20px 0;
+}
+
+.init-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 500px;
+}
+
+.init-step-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  background: var(--color-fill-2);
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.init-step-pending {
+  opacity: 0.6;
+}
+
+.init-step-running {
+  background: rgba(var(--primary-6), 0.1);
+  border-left: 4px solid rgb(var(--primary-6));
+}
+
+.init-step-success {
+  background: rgba(var(--success-6), 0.1);
+  border-left: 4px solid rgb(var(--success-6));
+}
+
+.init-step-error {
+  background: rgba(var(--danger-6), 0.1);
+  border-left: 4px solid rgb(var(--danger-6));
+}
+
+.step-icon {
+  font-size: 24px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.step-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.init-retry-section {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 24px 0 0 0;
+  gap: 12px;
+}

@@ -1,0 +1,7 @@
+{
+    "error": "Error",
+    "errorTip": "Please check the cause before clicking the reload button",
+    "reload": "Reload",
+    "notFind": "Component not found",
+    "loadError": "Component failed to load"
+}
