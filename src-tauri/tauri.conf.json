@@ -24,7 +24,7 @@
     },
     "bundle": {
       "active": true,
-      "category": "Developer Tool",
+      "category": "public.app-category.developer-tools",
       "copyright": "",
       "deb": {
         "depends": []
@@ -55,8 +55,7 @@
         "timestampUrl": ""
       },
       "infoPlist": {
-        "NSRequiresAquaSystemAppearance": false,
-        "LSRequiresCarbon": false
+        "NSRequiresAquaSystemAppearance": false
       }
     },
     "security": {
