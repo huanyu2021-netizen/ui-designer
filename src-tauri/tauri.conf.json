@@ -44,11 +44,7 @@
         "frameworks": [],
         "providerShortName": null,
         "signingIdentity": null,
-        "minimumSystemVersion": "10.13",
-        "infoPlist": {
-          "NSRequiresAquaSystemAppearance": false,
-          "LSRequiresCarbon": false
-        }
+        "minimumSystemVersion": "10.13"
       },
       "resources": ["res/*"],
       "shortDescription": "",
@@ -57,6 +53,10 @@
         "certificateThumbprint": null,
         "digestAlgorithm": "sha256",
         "timestampUrl": ""
+      },
+      "infoPlist": {
+        "NSRequiresAquaSystemAppearance": false,
+        "LSRequiresCarbon": false
       }
     },
     "security": {
