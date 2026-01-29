@@ -7,48 +7,66 @@ fn main() {
         use std::fs;
         use std::path::Path;
 
-        // 查找生成的 Info.plist 文件
-        let bundle_path = Path::new("src-tauri/target/release/bundle/macos/ADP UI Designer.app");
-        let info_plist_path = bundle_path.join("Contents/Info.plist");
+        // 可能的 Info.plist 路径
+        let possible_paths = vec![
+            "src-tauri/target/release/bundle/macos/ADP UI Designer.app/Contents/Info.plist",
+            "target/release/bundle/macos/ADP UI Designer.app/Contents/Info.plist",
+        ];
 
-        if info_plist_path.exists() {
-            println!("cargo:warning=正在修改 Info.plist 以删除 LSRequiresCarbon...");
+        for plist_path_str in possible_paths {
+            let info_plist_path = Path::new(plist_path_str);
 
-            match fs::read_to_string(&info_plist_path) {
-                Ok(mut plist_content) => {
-                    // 删除 LSRequiresCarbon 键及其值
-                    let lines: Vec<&str> = plist_content.lines().collect();
-                    let mut filtered_lines = Vec::new();
-                    let mut i = 0;
+            if info_plist_path.exists() {
+                println!("cargo:warning=找到 Info.plist: {}", plist_path_str);
+                println!("cargo:warning=正在删除 LSRequiresCarbon...");
 
-                    while i < lines.len() {
-                        let line = lines[i];
+                match fs::read_to_string(&info_plist_path) {
+                    Ok(plist_content) => {
+                        // 删除 LSRequiresCarbon 键及其值
+                        let lines: Vec<&str> = plist_content.lines().collect();
+                        let mut filtered_lines = Vec::new();
+                        let mut i = 0;
+                        let mut found_and_removed = false;
 
-                        // 跳过 LSRequiresCarbon 相关行
-                        if line.contains("<key>LSRequiresCarbon</key>") {
-                            // 跳过 <key> 行
-                            i += 1;
-                            // 跳过 <true/> 或 <false/> 行
-                            if i < lines.len() && (lines[i].contains("<true/>") || lines[i].contains("<false/>")) {
+                        while i < lines.len() {
+                            let line = lines[i];
+
+                            // 跳过 LSRequiresCarbon 相关行
+                            if line.contains("<key>LSRequiresCarbon</key>") {
+                                println!("cargo:warning=发现 LSRequiresCarbon，正在删除...");
+                                found_and_removed = true;
+                                // 跳过 <key> 行
                                 i += 1;
+                                // 跳过 <true/> 或 <false/> 行
+                                if i < lines.len() && (lines[i].contains("<true/>") || lines[i].contains("<false/>")) {
+                                    i += 1;
+                                }
+                                continue;
                             }
-                            continue;
+
+                            filtered_lines.push(line);
+                            i += 1;
                         }
 
-                        filtered_lines.push(line);
-                        i += 1;
+                        // 写回文件
+                        let modified_content = filtered_lines.join("\n");
+                        match fs::write(&info_plist_path, modified_content) {
+                            Ok(_) => {
+                                println!("cargo:warning=✅ 已成功删除 LSRequiresCarbon");
+                                return; // 成功修改后退出
+                            }
+                            Err(e) => {
+                                println!("cargo:warning=❌ 写入 Info.plist 失败: {}", e);
+                            }
+                        }
                     }
-
-                    // 写回文件
-                    let modified_content = filtered_lines.join("\n");
-                    if fs::write(&info_plist_path, modified_content).is_ok() {
-                        println!("cargo:warning=已成功删除 LSRequiresCarbon 从 Info.plist");
+                    Err(e) => {
+                        println!("cargo:warning=❌ 无法读取 Info.plist: {}", e);
                     }
-                }
-                Err(e) => {
-                    println!("cargo:warning=无法读取 Info.plist: {}", e);
                 }
             }
         }
+
+        println!("cargo:warning=⚠️  未找到 Info.plist 文件，可能尚未构建或路径不同");
     }
 }
