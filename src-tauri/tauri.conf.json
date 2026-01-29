@@ -43,7 +43,11 @@
         "exceptionDomain": "",
         "frameworks": [],
         "providerShortName": null,
-        "signingIdentity": null
+        "signingIdentity": null,
+        "minimumSystemVersion": "10.13"
+      },
+      "infoPlist": {
+        "LSRequiresCarbon": false
       },
       "resources": ["res/*"],
       "shortDescription": "",
