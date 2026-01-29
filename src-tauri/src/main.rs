@@ -616,9 +616,22 @@ async fn clone_app_repo(workspace_path: String) -> Result<String, String> {
         &apps_dir,
     )?;
 
-    // 创建新分支，命名为 ui-pages-年月日
+    // 创建新分支，命名为 ui-pages-{用户名}-{月}{日}
     let now = chrono::Local::now();
-    let branch_name = format!("ui-pages-{}", now.format("%Y%m%d"));
+
+    // 获取电脑用户名
+    let username = std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_else(|_| "user".to_string());
+
+    // 格式化用户名：转小写，移除空格和特殊字符
+    let username: String = username
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+
+    let branch_name = format!("ui-pages-{}-{}", username, now.format("%m%d"));
 
     let checkout_output = execute_command_with_output(
         "git",
