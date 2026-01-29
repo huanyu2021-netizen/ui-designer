@@ -73,10 +73,13 @@ jobs:
             ADP-UI-Designer-macOS-v*/
 
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') && secrets.GITHUB_TOKEN != ''
         uses: softprops/action-gh-release@v1
         with:
           files: |
             ADP-UI-Designer-macOS-v*.dmg
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
