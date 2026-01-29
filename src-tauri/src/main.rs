@@ -128,9 +128,15 @@ fn check_environment() -> Result<EnvironmentCheck, String> {
     let mut missing_tools = Vec::new();
 
     // Check Node.js (version >= 20)
-    let node_result = Command::new("node")
-        .arg("--version")
-        .output();
+    let node_result = if cfg!(windows) {
+        create_silent_command("node")
+            .arg("--version")
+            .output()
+    } else {
+        Command::new("node")
+            .arg("--version")
+            .output()
+    };
 
     let (node_installed, node_version, node_version_valid) = match node_result {
         Ok(output) => {
@@ -190,9 +196,15 @@ fn check_environment() -> Result<EnvironmentCheck, String> {
     };
 
     // Check git
-    let git_result = Command::new("git")
-        .arg("--version")
-        .output();
+    let git_result = if cfg!(windows) {
+        create_silent_command("git")
+            .arg("--version")
+            .output()
+    } else {
+        Command::new("git")
+            .arg("--version")
+            .output()
+    };
 
     let (git_installed, git_version) = match git_result {
         Ok(output) => {
@@ -768,10 +780,17 @@ async fn update_workspace(workspace_path: String) -> Result<String, String> {
     // 更新主仓库（workspace 已经指向 laiye-monorepo-scaffold 目录）
     let git_dir = workspace.join(".git");
     if git_dir.exists() {
-        let output = Command::new("git")
-            .args(["pull", "origin", "master"])
-            .current_dir(workspace)
-            .output();
+        let output = if cfg!(windows) {
+            create_silent_command("git")
+                .args(["pull", "origin", "master"])
+                .current_dir(workspace)
+                .output()
+        } else {
+            Command::new("git")
+                .args(["pull", "origin", "master"])
+                .current_dir(workspace)
+                .output()
+        };
 
         match output {
             Ok(result) => {
@@ -787,10 +806,17 @@ async fn update_workspace(workspace_path: String) -> Result<String, String> {
                     let app_repo = workspace.join("apps").join("laiye-adp");
                     let app_git = app_repo.join(".git");
                     if app_git.exists() {
-                        let app_output = Command::new("git")
-                            .args(["pull", "origin", "master"])
-                            .current_dir(&app_repo)
-                            .output();
+                        let app_output = if cfg!(windows) {
+                            create_silent_command("git")
+                                .args(["pull", "origin", "master"])
+                                .current_dir(&app_repo)
+                                .output()
+                        } else {
+                            Command::new("git")
+                                .args(["pull", "origin", "master"])
+                                .current_dir(&app_repo)
+                                .output()
+                        };
 
                         match app_output {
                             Ok(app_result) => {
@@ -982,10 +1008,17 @@ async fn get_app_branch(workspace_path: String) -> Result<Option<String>, String
         return Ok(None);
     }
 
-    let output = Command::new("git")
-        .args(["branch", "--show-current"])
-        .current_dir(&app_dir)
-        .output();
+    let output = if cfg!(windows) {
+        create_silent_command("git")
+            .args(["branch", "--show-current"])
+            .current_dir(&app_dir)
+            .output()
+    } else {
+        Command::new("git")
+            .args(["branch", "--show-current"])
+            .current_dir(&app_dir)
+            .output()
+    };
 
     match output {
         Ok(result) => {
