@@ -46,9 +46,6 @@
         "signingIdentity": null,
         "minimumSystemVersion": "10.13"
       },
-      "infoPlist": {
-        "LSRequiresCarbon": false
-      },
       "resources": ["res/*"],
       "shortDescription": "",
       "targets": "all",
