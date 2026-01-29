@@ -43,7 +43,8 @@
         "exceptionDomain": "",
         "frameworks": [],
         "providerShortName": null,
-        "signingIdentity": null
+        "signingIdentity": null,
+        "minimumSystemVersion": "10.13"
       },
       "resources": ["res/*"],
       "shortDescription": "",
