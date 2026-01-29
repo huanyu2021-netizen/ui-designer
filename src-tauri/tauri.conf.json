@@ -45,7 +45,7 @@
         "providerShortName": null,
         "signingIdentity": null,
         "minimumSystemVersion": "10.13",
-        "info_plist": {
+        "infoPlist": {
           "NSRequiresAquaSystemAppearance": false,
           "LSRequiresCarbon": false
         }
