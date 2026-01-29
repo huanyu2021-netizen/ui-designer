@@ -44,7 +44,11 @@
         "frameworks": [],
         "providerShortName": null,
         "signingIdentity": null,
-        "minimumSystemVersion": "10.13"
+        "minimumSystemVersion": "10.13",
+        "info_plist": {
+          "NSRequiresAquaSystemAppearance": false,
+          "LSRequiresCarbon": false
+        }
       },
       "resources": ["res/*"],
       "shortDescription": "",
