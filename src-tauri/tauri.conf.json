@@ -43,8 +43,7 @@
         "exceptionDomain": "",
         "frameworks": [],
         "providerShortName": null,
-        "signingIdentity": null,
-        "minimumSystemVersion": "10.13"
+        "signingIdentity": null
       },
       "resources": ["res/*"],
       "shortDescription": "",
@@ -53,9 +52,6 @@
         "certificateThumbprint": null,
         "digestAlgorithm": "sha256",
         "timestampUrl": ""
-      },
-      "infoPlist": {
-        "NSRequiresAquaSystemAppearance": false
       }
     },
     "security": {
