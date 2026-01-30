@@ -12,7 +12,7 @@ use std::time::Duration;
 use std::sync::Mutex;
 use chrono;
 use git_module::*;
-use serde::{Deserialize, Serialize as SerdeSerialize};
+use serde::Deserialize;
 
 // Windows 上隐藏 CMD 窗口的标志
 #[cfg(target_os = "windows")]
@@ -1432,21 +1432,18 @@ fn main() {
             // Register F12 to toggle developer tools
             let window = app.get_window("main").unwrap();
 
-            // Use the correct API for Tauri 1.x
             use tauri::GlobalShortcutManager;
 
             let mut manager = app.global_shortcut_manager();
             let shortcut = "F12";
 
+            // Note: DevTools in Tauri requires enabling with a feature flag
+            // For now, we'll use a simple JavaScript evaluation approach
             if let Err(e) = manager.register(shortcut, {
                 let window = window.clone();
                 move || {
-                    // Toggle developer tools
-                    if window.is_devtools_open() {
-                        window.close_devtools();
-                    } else {
-                        window.open_devtools();
-                    }
+                    // Try to use the inspect() function which is available in some webviews
+                    let _ = window.eval("if (typeof window.inspect === 'function') { window.inspect(); }");
                 }
             }) {
                 eprintln!("Failed to register F12 shortcut: {}", e);
