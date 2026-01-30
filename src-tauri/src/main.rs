@@ -65,19 +65,35 @@ fn find_command(program: &str) -> Option<String> {
         }
     }
 
-    // 如果 which 失败，直接返回 None，让调用者使用命令名
-    // 这样可以依赖系统的 PATH 环境变量
+    // 如果 which 失败，检查常见的安装路径
+    let common_paths = [
+        format!("/usr/local/bin/{}", program),
+        format!("/opt/homebrew/bin/{}", program),
+        format!("/usr/bin/{}", program),
+        format!("/bin/{}", program),
+    ];
+
+    for path in common_paths {
+        if std::path::Path::new(&path).exists() {
+            return Some(path);
+        }
+    }
+
     None
 }
 
 // 创建不会弹出窗口的命令（Unix 版本）
-// 注：在 Unix/macOS 上，我们直接使用命令名而不是完整路径
-// 这样可以正确处理符号链接，并依赖系统的 PATH 环境变量
+// 注：在 Unix/macOS 上，使用 find_command 查找完整路径
+// 这样可以正确处理符号链接和各种安装路径
 #[cfg(unix)]
 fn create_command_with_path(program: &str) -> Command {
-    // 直接使用命令名，让 shell 通过 PATH 查找
-    // 这会自动处理符号链接和各种安装路径
-    Command::new(program)
+    // 尝试使用 find_command 获取完整路径
+    if let Some(path) = find_command(program) {
+        Command::new(path)
+    } else {
+        // 如果找不到，回退到使用命令名，依赖系统的 PATH
+        Command::new(program)
+    }
 }
 
 // 解压嵌入的资源到指定目录
@@ -371,9 +387,18 @@ async fn install_tool(tool_name: String, _window: tauri::Window) -> Result<Insta
                     .args(["/C", "npm", "install", "-g", "pnpm"])
                     .output()
             } else {
-                Command::new("npm")
-                    .args(["install", "-g", "pnpm"])
-                    .output()
+                #[cfg(unix)]
+                {
+                    create_command_with_path("npm")
+                        .args(["install", "-g", "pnpm"])
+                        .output()
+                }
+                #[cfg(not(unix))]
+                {
+                    Command::new("npm")
+                        .args(["install", "-g", "pnpm"])
+                        .output()
+                }
             };
 
             match result {
@@ -676,13 +701,35 @@ fn execute_command_with_output(
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
-    } else {
-        Command::new(program)
+    } else if is_windows {
+        // Windows 上使用 cmd /C 来执行其他命令
+        create_silent_command("cmd")
+            .args(["/C", program])
             .args(args)
             .current_dir(working_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
+    } else {
+        // Unix/macOS 上使用 create_command_with_path 来查找命令
+        #[cfg(unix)]
+        {
+            create_command_with_path(program)
+                .args(args)
+                .current_dir(working_dir)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+        }
+        #[cfg(not(unix))]
+        {
+            Command::new(program)
+                .args(args)
+                .current_dir(working_dir)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+        }
     };
 
     match result {
@@ -1265,12 +1312,24 @@ async fn start_dev_server(
             .stderr(StdioLib::piped())
             .spawn()
     } else {
-        Command::new("npm")
-            .args(["run", "dev"])
-            .current_dir(&app_dir)
-            .stdout(StdioLib::piped())
-            .stderr(StdioLib::piped())
-            .spawn()
+        #[cfg(unix)]
+        {
+            create_command_with_path("npm")
+                .args(["run", "dev"])
+                .current_dir(&app_dir)
+                .stdout(StdioLib::piped())
+                .stderr(StdioLib::piped())
+                .spawn()
+        }
+        #[cfg(not(unix))]
+        {
+            Command::new("npm")
+                .args(["run", "dev"])
+                .current_dir(&app_dir)
+                .stdout(StdioLib::piped())
+                .stderr(StdioLib::piped())
+                .spawn()
+        }
     };
 
     let mut child = child.map_err(|e| format!("启动开发服务器失败: {}", e))?;
