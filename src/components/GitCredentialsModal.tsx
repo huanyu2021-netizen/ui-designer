@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Modal, Button, Typography, Space, Input, Message, Form } from '@arco-design/web-react';
 import { IconSave, IconDelete, IconCheckCircle } from '@arco-design/web-react/icon';
-import { invoke } from '@tauri-apps/api/tauri';
 
 const { Text } = Typography;
 
@@ -22,17 +21,18 @@ function GitCredentialsModal({ visible, onClose, onSaved }: GitCredentialsModalP
   const [savedCredentials, setSavedCredentials] = useState<GitCredentials | null>(null);
   const [hasCredentials, setHasCredentials] = useState<boolean>(false);
 
-  // Load saved credentials when modal opens
+  // Load saved credentials from localStorage when modal opens
   useEffect(() => {
     if (visible) {
       loadCredentials();
     }
   }, [visible]);
 
-  const loadCredentials = async (): Promise<void> => {
+  const loadCredentials = (): void => {
     try {
-      const creds = await invoke<GitCredentials | null>('get_git_credentials');
-      if (creds) {
+      const stored = localStorage.getItem('git_credentials');
+      if (stored) {
+        const creds = JSON.parse(stored) as GitCredentials;
         setSavedCredentials(creds);
         setHasCredentials(true);
         form.setFieldsValue({
@@ -44,7 +44,8 @@ function GitCredentialsModal({ visible, onClose, onSaved }: GitCredentialsModalP
         form.resetFields();
       }
     } catch (error) {
-      console.error('Failed to load credentials:', error);
+      console.error('Failed to load credentials from localStorage:', error);
+      setHasCredentials(false);
     }
   };
 
@@ -52,15 +53,15 @@ function GitCredentialsModal({ visible, onClose, onSaved }: GitCredentialsModalP
     console.log('开始保存凭据:', values);
     setLoading(true);
     try {
-      await invoke('save_git_credentials', {
+      // Save to localStorage instead of backend
+      const creds: GitCredentials = {
         username: values.username,
         token: values.token
-      });
+      };
+      localStorage.setItem('git_credentials', JSON.stringify(creds));
+
       Message.success('Git 凭据保存成功！');
-      setSavedCredentials({
-        username: values.username,
-        token: values.token
-      });
+      setSavedCredentials(creds);
       setHasCredentials(true);
       // 保存成功后关闭弹窗并触发回调
       onClose();
@@ -73,9 +74,9 @@ function GitCredentialsModal({ visible, onClose, onSaved }: GitCredentialsModalP
     }
   };
 
-  const handleClear = async (): Promise<void> => {
+  const handleClear = (): void => {
     try {
-      await invoke('clear_git_credentials');
+      localStorage.removeItem('git_credentials');
       Message.success('Git 凭据已清除');
       setSavedCredentials(null);
       setHasCredentials(false);

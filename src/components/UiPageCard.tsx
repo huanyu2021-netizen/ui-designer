@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Card, Dropdown, Button, Menu, Message, Modal, Input, Typography } from "@arco-design/web-react";
 import { IconPalette, IconMore, IconCopy, IconPushpin } from "@arco-design/web-react/icon";
 import { invoke } from "@tauri-apps/api/tauri";
+import { loadGitCredentials } from "../utils/gitCredentials";
 
 const { Text } = Typography;
 
@@ -76,10 +77,13 @@ function UiPageCard({ name, path, workspacePath, onOpen, onDelete }: UiPageCardP
     setCommitError("");
 
     try {
+      const creds = loadGitCredentials();
       const result = await invoke<string>("git_commit_and_push_ui_page", {
         workspacePath,
         pageName: name,
-        message: commitMessage.trim()
+        message: commitMessage.trim(),
+        gitUsername: creds?.username,
+        gitToken: creds?.token
       });
       Message.success(result);
       setShowGitModal(false);

@@ -26,68 +26,9 @@ struct GitCredentials {
     token: String, // Using token instead of password for better security
 }
 
-// Get the path to credentials file
-fn get_credentials_path() -> Result<PathBuf, String> {
-    let mut path = std::env::current_dir()
-        .map_err(|e| format!("Failed to get current directory: {}", e))?;
-    path.push(".git_credentials.json");
-    Ok(path)
-}
+// Note: Credentials are now stored in frontend localStorage
+// This avoids file system permission issues on macOS
 
-// Save Git credentials
-fn save_credentials(username: String, token: String) -> Result<(), String> {
-    let creds = GitCredentials { username, token };
-    let creds_path = get_credentials_path()?;
-
-    let creds_json = serde_json::to_string_pretty(&creds)
-        .map_err(|e| format!("Failed to serialize credentials: {}", e))?;
-
-    fs::write(&creds_path, creds_json)
-        .map_err(|e| format!("Failed to write credentials: {}", e))?;
-
-    // Set file permissions to read/write only by owner (Unix-like systems)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perm = fs::metadata(&creds_path)
-            .map_err(|e| format!("Failed to get metadata: {}", e))?
-            .permissions();
-        perm.set_mode(0o600); // Read/write for owner only
-        fs::set_permissions(&creds_path, perm)
-            .map_err(|e| format!("Failed to set permissions: {}", e))?;
-    }
-
-    Ok(())
-}
-
-// Load Git credentials
-fn load_credentials() -> Result<Option<GitCredentials>, String> {
-    let creds_path = get_credentials_path()?;
-
-    if !creds_path.exists() {
-        return Ok(None);
-    }
-
-    let creds_json = fs::read_to_string(&creds_path)
-        .map_err(|e| format!("Failed to read credentials: {}", e))?;
-
-    let creds: GitCredentials = serde_json::from_str(&creds_json)
-        .map_err(|e| format!("Failed to deserialize credentials: {}", e))?;
-
-    Ok(Some(creds))
-}
-
-// Clear saved credentials
-fn clear_credentials() -> Result<(), String> {
-    let creds_path = get_credentials_path()?;
-
-    if creds_path.exists() {
-        fs::remove_file(&creds_path)
-            .map_err(|e| format!("Failed to remove credentials file: {}", e))?;
-    }
-
-    Ok(())
-}
 
 // 在编译时嵌入 res 目录
 #[cfg(debug_assertions)]
@@ -108,48 +49,35 @@ fn create_silent_command(program: &str) -> Command {
 #[cfg(unix)]
 fn find_command(program: &str) -> Option<String> {
     use std::env;
+    use std::process::Command;
 
-    // 首先尝试从 PATH 中查找
-    if let Ok(path_var) = env::var("PATH") {
-        for path in env::split_paths(&path_var) {
-            let cmd_path = path.join(program);
-            if cmd_path.exists() {
-                return cmd_path.to_str().map(|s| s.to_string());
+    // 使用 which 命令来查找命令（会自动处理符号链接）
+    let result = Command::new("which")
+        .arg(program)
+        .output();
+
+    if let Ok(output) = result {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Some(path);
             }
         }
     }
 
-    // macOS 常见的额外全局 npm 安装路径
-    let macos_extra_paths = [
-        format!("{}/.npm-global/bin/{}", env::var("HOME").unwrap_or_else(|_| "~".to_string()), program),
-        "/usr/local/bin".to_string(),
-        "/opt/homebrew/bin".to_string(), // Apple Silicon Mac
-        format!("/Users/{}/.npm-global/bin", env::var("USER").unwrap_or_else(|_| "unknown".to_string())),
-    ];
-
-    for base_path in macos_extra_paths.iter() {
-        let cmd_path = if base_path.ends_with(program) {
-            base_path.clone()
-        } else {
-            format!("{}/{}", base_path, program)
-        };
-
-        if std::path::Path::new(&cmd_path).exists() {
-            return Some(cmd_path);
-        }
-    }
-
+    // 如果 which 失败，直接返回 None，让调用者使用命令名
+    // 这样可以依赖系统的 PATH 环境变量
     None
 }
 
-// 创建不会弹出窗口的命令（Unix 版本，支持路径查找）
+// 创建不会弹出窗口的命令（Unix 版本）
+// 注：在 Unix/macOS 上，我们直接使用命令名而不是完整路径
+// 这样可以正确处理符号链接，并依赖系统的 PATH 环境变量
 #[cfg(unix)]
 fn create_command_with_path(program: &str) -> Command {
-    if let Some(full_path) = find_command(program) {
-        Command::new(&full_path)
-    } else {
-        Command::new(program)
-    }
+    // 直接使用命令名，让 shell 通过 PATH 查找
+    // 这会自动处理符号链接和各种安装路径
+    Command::new(program)
 }
 
 // 解压嵌入的资源到指定目录
@@ -460,7 +388,90 @@ async fn install_tool(tool_name: String, _window: tauri::Window) -> Result<Insta
                         })
                     } else {
                         let stderr = String::from_utf8_lossy(&output.stderr);
-                        Err(format!("pnpm 安装失败: {}", stderr.trim()))
+                        let stderr_str = stderr.trim();
+
+                        // Check if it's a permission error (common on macOS)
+                        if stderr_str.contains("EACCES")
+                            || stderr_str.contains("permission")
+                            || stderr_str.contains("access denied")
+                            || stderr_str.contains("权限")
+                        {
+                            // On macOS, use AppleScript to trigger sudo prompt
+                            #[cfg(target_os = "macos")]
+                            {
+                                let sudo_result = Command::new("osascript")
+                                    .arg("-e")
+                                    .arg("do shell script \"npm install -g pnpm\" with administrator privileges")
+                                    .output();
+
+                                match sudo_result {
+                                    Ok(sudo_output) => {
+                                        if sudo_output.status.success() {
+                                            let stdout = String::from_utf8_lossy(&sudo_output.stdout);
+                                            Ok(InstallResult {
+                                                success: true,
+                                                message: format!("pnpm 安装成功！\n{}", stdout.trim()),
+                                                tool: tool_name,
+                                            })
+                                        } else {
+                                            let sudo_stderr = String::from_utf8_lossy(&sudo_output.stderr);
+                                            // User cancelled or failed
+                                            let install_url = "https://pnpm.io/installation";
+                                            let _ = open_url(install_url);
+
+                                            Ok(InstallResult {
+                                                success: false,
+                                                message: format!(
+                                                    "自动安装失败或已取消\n\n{}\n\n已打开 pnpm 安装页面。\n\
+                                                    也可以手动使用独立安装脚本：\n\
+                                                    curl -fsSL https://get.pnpm.io/install.sh | sh -",
+                                                    sudo_stderr.trim()
+                                                ),
+                                                tool: tool_name,
+                                            })
+                                        }
+                                    }
+                                    Err(e) => {
+                                        // Fallback to manual instructions
+                                        let install_url = "https://pnpm.io/installation";
+                                        let _ = open_url(install_url);
+
+                                        Ok(InstallResult {
+                                            success: false,
+                                            message: format!(
+                                                "无法触发权限提示\n\n已打开 pnpm 安装页面。\n\
+                                                推荐使用独立安装脚本：\n\
+                                                curl -fsSL https://get.pnpm.io/install.sh | sh -\n\n\
+                                                错误: {}",
+                                                e
+                                            ),
+                                            tool: tool_name,
+                                        })
+                                    }
+                                }
+                            }
+
+                            #[cfg(not(target_os = "macos"))]
+                            {
+                                // On Linux/other, suggest using the standalone install script
+                                let install_url = "https://pnpm.io/installation";
+                                open_url(install_url)?;
+
+                                Ok(InstallResult {
+                                    success: false,
+                                    message: format!(
+                                        "安装失败：权限不足\n\n推荐使用独立安装脚本：\n\n\
+                                        curl -fsSL https://get.pnpm.io/install.sh | sh -\n\n\
+                                        或使用 sudo：\n\
+                                        sudo npm install -g pnpm\n\n\
+                                        已打开 pnpm 安装页面，请查看详细说明。",
+                                    ),
+                                    tool: tool_name,
+                                })
+                            }
+                        } else {
+                            Err(format!("pnpm 安装失败: {}", stderr_str))
+                        }
                     }
                 }
                 Err(e) => {
@@ -469,8 +480,14 @@ async fn install_tool(tool_name: String, _window: tauri::Window) -> Result<Insta
                     open_url(install_url)?;
 
                     Ok(InstallResult {
-                        success: true,
-                        message: format!("npm 不可用，已打开 pnpm 安装页面。请按照说明安装后刷新按钮重新检测。\n错误: {}", e),
+                        success: false,
+                        message: format!(
+                            "npm 不可用\n\n已打开 pnpm 安装页面。\n\
+                            推荐使用独立安装脚本：\n\
+                            curl -fsSL https://get.pnpm.io/install.sh | sh -\n\n\
+                            请按照说明安装后刷新按钮重新检测。\n错误: {}",
+                            e
+                        ),
                         tool: tool_name,
                     })
                 }
@@ -541,25 +558,26 @@ async fn create_workspace_directory(path: String) -> Result<String, String> {
     Ok(format!("成功创建目录: {}", path))
 }
 
+// Git credentials are now stored in frontend localStorage
+// These commands are kept for compatibility but no-op on backend
 #[tauri::command]
 async fn save_git_credentials(username: String, token: String) -> Result<String, String> {
     if username.trim().is_empty() || token.trim().is_empty() {
-        return Err("用户名和 Token 不能为空".to_string());
+        return Err("用户名和 Token 不能空".to_string());
     }
-
-    save_credentials(username, token)?;
-
-    Ok("Git 凭据保存成功".to_string())
+    // Credentials are saved in frontend localStorage
+    Ok("Git 凭据已保存到浏览器本地存储".to_string())
 }
 
 #[tauri::command]
 async fn get_git_credentials() -> Result<Option<GitCredentials>, String> {
-    load_credentials()
+    // Credentials are loaded from frontend localStorage
+    Ok(None)
 }
 
 #[tauri::command]
 async fn clear_git_credentials() -> Result<String, String> {
-    clear_credentials()?;
+    // Credentials are cleared in frontend localStorage
     Ok("Git 凭据已清除".to_string())
 }
 
@@ -709,7 +727,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> io::Result<()> {
 }
 
 #[tauri::command]
-async fn clone_main_repo(workspace_path: String) -> Result<String, String> {
+async fn clone_main_repo(workspace_path: String, username: Option<String>, token: Option<String>) -> Result<String, String> {
     let main_repo_url = "https://git.laiye.com/laiye-frontend-repos/laiye-monorepo-scaffold";
     let workspace = Path::new(&workspace_path);
 
@@ -729,9 +747,9 @@ async fn clone_main_repo(workspace_path: String) -> Result<String, String> {
         return Err("工作空间目录不为空且不是 git 仓库".to_string());
     }
 
-    // 尝试使用保存的凭据克隆
-    let output = if let Ok(Some(creds)) = load_credentials() {
-        git_clone_with_auth(main_repo_url, workspace, &creds.username, &creds.token)?
+    // 尝试使用提供的凭据克隆
+    let output = if let (Some(user), Some(tok)) = (username, token) {
+        git_clone_with_auth(main_repo_url, workspace, &user, &tok)?
     } else {
         git_clone(main_repo_url, workspace)?
     };
@@ -740,7 +758,7 @@ async fn clone_main_repo(workspace_path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn clone_app_repo(workspace_path: String) -> Result<String, String> {
+async fn clone_app_repo(workspace_path: String, git_username: Option<String>, git_token: Option<String>) -> Result<String, String> {
     let app_repo_url = "https://git.laiye.com/laiye-frontend-repos/laiye-adp";
     let workspace = Path::new(&workspace_path);
     let apps_dir = workspace.join("apps");
@@ -760,9 +778,9 @@ async fn clone_app_repo(workspace_path: String) -> Result<String, String> {
             .map_err(|e| format!("无法创建 apps 目录: {}", e))?;
     }
 
-    // 尝试使用保存的凭据克隆
-    let output = if let Ok(Some(creds)) = load_credentials() {
-        git_clone_with_auth(app_repo_url, &app_dir, &creds.username, &creds.token)?
+    // 尝试使用提供的凭据克隆
+    let output = if let (Some(user), Some(tok)) = (git_username, git_token) {
+        git_clone_with_auth(app_repo_url, &app_dir, &user, &tok)?
     } else {
         git_clone(app_repo_url, &app_dir)?
     };
@@ -930,7 +948,7 @@ async fn open_folder(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn update_workspace(workspace_path: String) -> Result<String, String> {
+async fn update_workspace(workspace_path: String, username: Option<String>, token: Option<String>) -> Result<String, String> {
     let workspace = Path::new(&workspace_path);
 
     if !workspace.exists() {
@@ -940,9 +958,9 @@ async fn update_workspace(workspace_path: String) -> Result<String, String> {
     // 更新主仓库（workspace 已经指向 laiye-monorepo-scaffold 目录）
     let git_dir = workspace.join(".git");
     if git_dir.exists() {
-        // 尝试使用保存的凭据更新
-        let output = if let Ok(Some(creds)) = load_credentials() {
-            git_pull_with_auth(workspace, "origin", "master", &creds.username, &creds.token)
+        // 尝试使用提供的凭据更新
+        let output = if let (Some(user), Some(tok)) = (&username, &token) {
+            git_pull_with_auth(workspace, "origin", "master", user, tok)
         } else {
             git_pull(workspace, "origin", "master")
         };
@@ -955,9 +973,9 @@ async fn update_workspace(workspace_path: String) -> Result<String, String> {
                 let app_repo = workspace.join("apps").join("laiye-adp");
                 let app_git = app_repo.join(".git");
                 if app_git.exists() {
-                    // 尝试使用保存的凭据更新应用仓库
-                    let app_output = if let Ok(Some(creds)) = load_credentials() {
-                        git_pull_with_auth(&app_repo, "origin", "master", &creds.username, &creds.token)
+                    // 尝试使用提供的凭据更新应用仓库
+                    let app_output = if let (Some(user), Some(tok)) = (&username, &token) {
+                        git_pull_with_auth(&app_repo, "origin", "master", user, tok)
                     } else {
                         git_pull(&app_repo, "origin", "master")
                     };
@@ -1179,7 +1197,7 @@ async fn git_has_ui_page_changes(workspace_path: String, page_name: String) -> R
 }
 
 #[tauri::command]
-async fn git_commit_and_push_ui_page(workspace_path: String, page_name: String, message: String) -> Result<String, String> {
+async fn git_commit_and_push_ui_page(workspace_path: String, page_name: String, message: String, git_username: Option<String>, git_token: Option<String>) -> Result<String, String> {
     let workspace = Path::new(&workspace_path);
     let app_dir = workspace.join("apps").join("laiye-adp");
 
@@ -1198,11 +1216,11 @@ async fn git_commit_and_push_ui_page(workspace_path: String, page_name: String, 
 
     // 提交文件
     let commit_msg = format!("ui-pages/{}: {}", page_name, message);
-    let commit_result = if let Ok(Some(creds)) = load_credentials() {
+    let commit_result = if let (Some(user), Some(tok)) = (git_username, git_token) {
         // 有凭据，先提交
         let _ = git_commit_files(&app_dir, &page_path, &commit_msg)?;
         // 然后推送（带认证）
-        git_push_with_auth(&app_dir, &creds.username, &creds.token)
+        git_push_with_auth(&app_dir, &user, &tok)
     } else {
         // 没有凭据，先提交
         let _ = git_commit_files(&app_dir, &page_path, &commit_msg)?;

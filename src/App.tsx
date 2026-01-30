@@ -21,6 +21,7 @@ import {
 } from "@arco-design/web-react/icon";
 import { invoke } from "@tauri-apps/api/tauri";
 import { open } from "@tauri-apps/api/shell";
+import { loadGitCredentials } from "./utils/gitCredentials";
 import enUS from "@arco-design/web-react/es/locale/en-US";
 import EnvironmentCheckModal from "./components/EnvironmentCheckModal";
 import WorkspaceSelector from "./components/WorkspaceSelector";
@@ -171,7 +172,7 @@ function App() {
   const handleInitWorkspace = async (path: string): Promise<void> => {
     // 先检查是否有 Git 凭据
     try {
-      const creds = await invoke<{ username: string; token: string } | null>("get_git_credentials");
+      const creds = loadGitCredentials();
       if (!creds) {
         // 没有凭据，先显示凭据弹窗，保存后再执行初始化
         setPendingAction(() => () => {
@@ -209,18 +210,29 @@ function App() {
       );
     };
 
+    // Load credentials from localStorage
+    const creds = loadGitCredentials();
+
     try {
       // 步骤1: 克隆主仓库
       updateStepStatus("clone-main", "running");
       setInitProgress(10);
-      await invoke("clone_main_repo", { workspacePath: path });
+      await invoke("clone_main_repo", {
+        workspacePath: path,
+        username: creds?.username,
+        token: creds?.token
+      });
       updateStepStatus("clone-main", "success");
       setInitProgress(30);
 
       // 步骤2: 克隆应用仓库
       updateStepStatus("clone-app", "running");
       setInitProgress(40);
-      await invoke("clone_app_repo", { workspacePath: path });
+      await invoke("clone_app_repo", {
+        workspacePath: path,
+        gitUsername: creds?.username,
+        gitToken: creds?.token
+      });
       updateStepStatus("clone-app", "success");
       setInitProgress(55);
 
@@ -328,7 +340,7 @@ function App() {
 
     // 先检查是否有 Git 凭据
     try {
-      const creds = await invoke<{ username: string; token: string } | null>("get_git_credentials");
+      const creds = loadGitCredentials();
       if (!creds) {
         // 没有凭据，先显示凭据弹窗，保存后再执行
         setPendingAction(() => () => {
@@ -416,14 +428,17 @@ function App() {
 
     // 先检查是否有 Git 凭据
     try {
-      const creds = await invoke<{ username: string; token: string } | null>("get_git_credentials");
+      const creds = loadGitCredentials();
       if (!creds) {
         // 没有凭据，先显示凭据弹窗，保存后再执行
         setPendingAction(() => async () => {
           try {
             console.log('workspacePath', workspacePath);
+            const savedCreds = loadGitCredentials();
             const result = await invoke<string>("update_workspace", {
               workspacePath,
+              username: savedCreds?.username,
+              token: savedCreds?.token
             });
             Message.success(result);
           } catch (error) {
@@ -435,15 +450,12 @@ function App() {
         setShowGitCredentialsModal(true);
         return;
       }
-    } catch {
-      // 忽略检查错误，继续执行
-    }
 
-    try {
       console.log('workspacePath', workspacePath);
-
       const result = await invoke<string>("update_workspace", {
         workspacePath,
+        username: creds.username,
+        token: creds.token
       });
       Message.success(result);
     } catch (error) {
