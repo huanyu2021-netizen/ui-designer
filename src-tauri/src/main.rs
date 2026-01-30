@@ -1157,6 +1157,66 @@ async fn delete_ui_page(workspace_path: String, page_name: String) -> Result<Str
 }
 
 #[tauri::command]
+async fn git_has_ui_page_changes(workspace_path: String, page_name: String) -> Result<bool, String> {
+    let workspace = Path::new(&workspace_path);
+    let app_dir = workspace.join("apps").join("laiye-adp");
+
+    if !app_dir.exists() {
+        return Ok(false);
+    }
+
+    // 检查是否为 git 仓库
+    let git_dir = app_dir.join(".git");
+    if !git_dir.exists() {
+        return Ok(false);
+    }
+
+    // 页面文件夹相对于 apps/laiye-adp 的路径
+    let page_path = format!("src/ui-pages/{}", page_name);
+
+    // 检查是否有改动
+    git_has_changes(&app_dir, &page_path)
+}
+
+#[tauri::command]
+async fn git_commit_and_push_ui_page(workspace_path: String, page_name: String, message: String) -> Result<String, String> {
+    let workspace = Path::new(&workspace_path);
+    let app_dir = workspace.join("apps").join("laiye-adp");
+
+    if !app_dir.exists() {
+        return Err("应用目录不存在".to_string());
+    }
+
+    // 检查是否为 git 仓库
+    let git_dir = app_dir.join(".git");
+    if !git_dir.exists() {
+        return Err("不是一个 Git 仓库".to_string());
+    }
+
+    // 页面文件夹相对于 apps/laiye-adp 的路径
+    let page_path = format!("src/ui-pages/{}", page_name);
+
+    // 提交文件
+    let commit_msg = format!("ui-pages/{}: {}", page_name, message);
+    let commit_result = if let Ok(Some(creds)) = load_credentials() {
+        // 有凭据，先提交
+        let _ = git_commit_files(&app_dir, &page_path, &commit_msg)?;
+        // 然后推送（带认证）
+        git_push_with_auth(&app_dir, &creds.username, &creds.token)
+    } else {
+        // 没有凭据，先提交
+        let _ = git_commit_files(&app_dir, &page_path, &commit_msg)?;
+        // 然后推送（不带认证）
+        git_push(&app_dir)
+    };
+
+    match commit_result {
+        Ok(msg) => Ok(msg),
+        Err(e) => Err(format!("提交成功，但推送失败: {}", e)),
+    }
+}
+
+#[tauri::command]
 async fn start_dev_server(
     workspace_path: String,
     manager: tauri::State<'_, DevServerManager>,
@@ -1364,8 +1424,38 @@ fn main() {
             get_ui_pages,
             create_ui_page,
             delete_ui_page,
-            get_app_branch
+            get_app_branch,
+            git_has_ui_page_changes,
+            git_commit_and_push_ui_page
         ])
+        .setup(|app| {
+            // Register F12 to toggle developer tools
+            let window = app.get_window("main").unwrap();
+
+            // Use the correct API for Tauri 1.x
+            use tauri::GlobalShortcutManager;
+
+            let mut manager = app.global_shortcut_manager();
+            let shortcut = "F12";
+
+            if let Err(e) = manager.register(shortcut, {
+                let window = window.clone();
+                move || {
+                    // Toggle developer tools
+                    if window.is_devtools_open() {
+                        window.close_devtools();
+                    } else {
+                        window.open_devtools();
+                    }
+                }
+            }) {
+                eprintln!("Failed to register F12 shortcut: {}", e);
+            } else {
+                eprintln!("F12 shortcut registered successfully");
+            }
+
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

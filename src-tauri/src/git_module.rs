@@ -212,3 +212,226 @@ pub fn has_remote_url(repo_dir: &Path, expected_url: &str) -> bool {
         _ => false,
     }
 }
+
+/// Check if a file or directory has uncommitted changes
+pub fn git_has_changes(repo_dir: &Path, pathspec: &str) -> Result<bool, String> {
+    // Verify that repo_dir is a git repository
+    let _repo = Repository::open(repo_dir)
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+
+    // Check if the path exists in the filesystem
+    let target_path = repo_dir.join(pathspec);
+    if !target_path.exists() {
+        eprintln!("Path does not exist: {}", target_path.display());
+        return Ok(false);
+    }
+
+    // Use git -C flag to specify repository directory (works on all platforms)
+    let repo_dir_str = repo_dir.to_str()
+        .ok_or_else(|| "Invalid repository path".to_string())?;
+
+    eprintln!("Checking git status for: repo={}, pathspec={}", repo_dir_str, pathspec);
+
+    #[cfg(target_os = "windows")]
+    let result = {
+        std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "git",
+                "-C",
+                repo_dir_str,
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+                pathspec,
+            ])
+            .output()
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let result = {
+        std::process::Command::new("git")
+            .args([
+                "-C",
+                repo_dir_str,
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+                pathspec,
+            ])
+            .output()
+    };
+
+    match result {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+
+            // Log for debugging
+            if !stdout.trim().is_empty() {
+                eprintln!("Git detected changes in '{}': {}", pathspec, stdout.trim());
+            }
+            if !stderr.trim().is_empty() && !stderr.contains("warning:") {
+                eprintln!("Git status stderr: {}", stderr);
+            }
+
+            // Git status returns empty if no changes
+            Ok(!stdout.trim().is_empty())
+        }
+        Err(e) => {
+            eprintln!("Failed to run git status command: {}", e);
+            // Fallback: try to detect changes using git2 library
+            detect_changes_fallback(repo_dir, pathspec)
+        }
+    }
+}
+
+/// Fallback method to detect changes using git2 library
+fn detect_changes_fallback(repo_dir: &Path, pathspec: &str) -> Result<bool, String> {
+    let repo = Repository::open(repo_dir)
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+
+    // Check for any changes in the repository
+    let statuses = repo.statuses(None)
+        .map_err(|e| format!("无法获取状态: {}", e))?;
+
+    // Check if any entry in statuses matches the pathspec
+    for entry in statuses.iter() {
+        if let Some(path) = entry.path() {
+            // Check if this file is within the pathspec directory
+            if path.starts_with(pathspec) || path.contains(pathspec) {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+/// Stage and commit changes to a specific file or directory
+pub fn git_commit_files(repo_dir: &Path, pathspec: &str, message: &str) -> Result<String, String> {
+    // Check if there are actually changes first
+    let has_changes = git_has_changes(repo_dir, pathspec)?;
+    if !has_changes {
+        return Err("没有改动需要提交".to_string());
+    }
+
+    // Use git -C flag to specify repository directory (works on all platforms)
+    let repo_dir_str = repo_dir.to_str()
+        .ok_or_else(|| "Invalid repository path".to_string())?;
+
+    eprintln!("Committing changes: repo={}, pathspec={}, message={}", repo_dir_str, pathspec, message);
+
+    // Stage the files
+    #[cfg(target_os = "windows")]
+    let add_result = {
+        std::process::Command::new("cmd")
+            .args(["/C", "git", "-C", repo_dir_str, "add", pathspec])
+            .output()
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let add_result = {
+        std::process::Command::new("git")
+            .args(["-C", repo_dir_str, "add", pathspec])
+            .output()
+    };
+
+    if !add_result.as_ref().map(|o| o.status.success()).unwrap_or(false) {
+        let stderr = add_result.as_ref()
+            .map(|o| String::from_utf8_lossy(&o.stderr).to_string())
+            .unwrap_or_default();
+        eprintln!("Git add failed: {}", stderr);
+        return Err(format!("暂存失败: {}", stderr.trim()));
+    }
+
+    eprintln!("Git add successful for: {}", pathspec);
+
+    // Commit the changes
+    #[cfg(target_os = "windows")]
+    let commit_result = {
+        std::process::Command::new("cmd")
+            .args(["/C", "git", "-C", repo_dir_str, "commit", "-m", message])
+            .output()
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let commit_result = {
+        std::process::Command::new("git")
+            .args(["-C", repo_dir_str, "commit", "-m", message])
+            .output()
+    };
+
+    match commit_result {
+        Ok(output) => {
+            if output.status.success() {
+                eprintln!("Git commit successful");
+                Ok(format!("成功提交: {}", message))
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!("Git commit failed: {}", stderr);
+                if stderr.contains("nothing to commit") {
+                    Err("没有改动需要提交".to_string())
+                } else {
+                    Err(format!("提交失败: {}", stderr.trim()))
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Git commit command failed: {}", e);
+            Err(format!("提交命令执行失败: {}", e))
+        }
+    }
+}
+
+/// Push commits to remote repository
+pub fn git_push(repo_dir: &Path) -> Result<String, String> {
+    let repo = Repository::open(repo_dir)
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+
+    // Get the current branch name
+    let branch_name = get_current_branch(repo_dir)
+        .map_err(|e| format!("无法获取分支名: {}", e))?
+        .ok_or_else(|| "无法获取当前分支".to_string())?;
+
+    // Find the remote
+    let mut remote = repo.find_remote("origin")
+        .map_err(|e| format!("找不到 origin 远程仓库: {}", e))?;
+
+    // Push
+    remote.push(&[format!("refs/heads/{}", branch_name)], None)
+        .map_err(|e| format!("推送失败: {}", e))?;
+
+    Ok(format!("成功推送到远程仓库的 {} 分支", branch_name))
+}
+
+/// Push commits to remote repository with authentication
+pub fn git_push_with_auth(repo_dir: &Path, username: &str, token: &str) -> Result<String, String> {
+    let repo = Repository::open(repo_dir)
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+
+    // Get the current branch name
+    let branch_name = get_current_branch(repo_dir)
+        .map_err(|e| format!("无法获取分支名: {}", e))?
+        .ok_or_else(|| "无法获取当前分支".to_string())?;
+
+    // Find the remote
+    let mut remote = repo.find_remote("origin")
+        .map_err(|e| format!("找不到 origin 远程仓库: {}", e))?;
+
+    // Prepare callbacks for authentication
+    let mut callbacks = RemoteCallbacks::new();
+    callbacks.credentials(|_url, _username_from_url, _allowed| {
+        Cred::userpass_plaintext(username, token)
+            .map_err(|_e| git2::Error::from_str("认证失败"))
+    });
+
+    // Push with authentication
+    let mut push_options = git2::PushOptions::new();
+    push_options.remote_callbacks(callbacks);
+
+    remote.push(&[format!("refs/heads/{}", branch_name)], Some(&mut push_options))
+        .map_err(|e| format!("推送失败: {}", e))?;
+
+    Ok(format!("成功推送到远程仓库的 {} 分支", branch_name))
+}
