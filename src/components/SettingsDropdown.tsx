@@ -1,11 +1,12 @@
 import { Dropdown, Button, Menu } from '@arco-design/web-react';
-import { IconSearch, IconSettings, IconFolder, IconSync, IconRefresh } from '@arco-design/web-react/icon';
+import { IconSearch, IconSettings, IconFolder, IconSync, IconRefresh, IconSafe } from '@arco-design/web-react/icon';
 
 interface SettingsDropdownProps {
   onEnvironmentCheck: () => void;
   onChangeWorkspace?: () => void;
   onReinitWorkspace?: () => void;
   onUpdateWorkspace?: () => void;
+  onGitCredentials?: () => void;
   hasWorkspace?: boolean;
 }
 
@@ -14,6 +15,7 @@ function SettingsDropdown({
   onChangeWorkspace,
   onReinitWorkspace,
   onUpdateWorkspace,
+  onGitCredentials,
   hasWorkspace = false
 }: SettingsDropdownProps) {
   const handleClickMenu = (key: string) => {
@@ -30,6 +32,9 @@ function SettingsDropdown({
       case 'update-workspace':
         onUpdateWorkspace?.();
         break;
+      case 'git-credentials':
+        onGitCredentials?.();
+        break;
       default:
         break;
     }
@@ -41,6 +46,7 @@ function SettingsDropdown({
       { key: 'update-workspace', name: '更新仓库', icon: <IconRefresh /> }
     ] : []),
     { key: 'change-workspace', name: '切换工作空间', icon: <IconFolder /> },
+    { key: 'git-credentials', name: 'Git 凭据设置', icon: <IconSafe /> },
     { key: 'env-check', name: '环境检测', icon: <IconSearch /> },
   ];
 

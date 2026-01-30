@@ -86,3 +86,4 @@ __pycache__/
 
 # Package manager (optional)
 .pnpm-store/
+src-tauri/.git_credentials.json

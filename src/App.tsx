@@ -26,6 +26,7 @@ import EnvironmentCheckModal from "./components/EnvironmentCheckModal";
 import WorkspaceSelector from "./components/WorkspaceSelector";
 import SettingsDropdown from "./components/SettingsDropdown";
 import UiPageCard from "./components/UiPageCard";
+import GitCredentialsModal from "./components/GitCredentialsModal";
 import "@arco-design/web-react/dist/css/arco.css";
 import "./App.less";
 
@@ -45,8 +46,7 @@ interface EnvironmentCheck {
   node_version_valid: boolean;
   pnpm_installed: boolean;
   pnpm_version?: string;
-  git_installed: boolean;
-  git_version?: string;
+  git_embedded: boolean;  // Git is now embedded in the application
   claude_installed: boolean;
   claude_version?: string;
   missing_tools: string[];
@@ -119,7 +119,24 @@ function App() {
   const [isStartingServer, setIsStartingServer] = useState<boolean>(false);
   const [uiPages, setUiPages] = useState<Array<{ name: string; path: string }>>([]);
   const [showCreatePageModal, setShowCreatePageModal] = useState<boolean>(false);
+  const [showGitCredentialsModal, setShowGitCredentialsModal] = useState<boolean>(false);
   const [appBranch, setAppBranch] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+
+  // 处理 Git 凭据弹窗关闭
+  const handleGitCredentialsClose = (): void => {
+    setShowGitCredentialsModal(false);
+  };
+
+  // 处理 Git 凭据保存成功后
+  const handleGitCredentialsSaved = (): void => {
+    setShowGitCredentialsModal(false);
+    // 如果有待执行的操作，执行它
+    if (pendingAction) {
+      pendingAction();
+      setPendingAction(null);
+    }
+  };
 
   const handleEnvConfirm = (): void => {
     setShowEnvModal(false);
@@ -152,6 +169,27 @@ function App() {
 
   // 开始初始化工作空间
   const handleInitWorkspace = async (path: string): Promise<void> => {
+    // 先检查是否有 Git 凭据
+    try {
+      const creds = await invoke<{ username: string; token: string } | null>("get_git_credentials");
+      if (!creds) {
+        // 没有凭据，先显示凭据弹窗，保存后再执行初始化
+        setPendingAction(() => () => {
+          doInitWorkspace(path);
+          setPendingAction(null);
+        });
+        setShowGitCredentialsModal(true);
+        return;
+      }
+    } catch {
+      // 忽略检查错误，继续执行
+    }
+
+    doInitWorkspace(path);
+  };
+
+  // 实际执行初始化
+  const doInitWorkspace = async (path: string) => {
     setShowWorkspaceModal(false);
     setIsInitializing(true);
     setInitFailed(false);
@@ -282,10 +320,28 @@ function App() {
   };
 
   // 重新初始化工作空间
-  const handleReinitWorkspace = (): void => {
+  const handleReinitWorkspace = async (): Promise<void> => {
     if (!workspacePath) {
       Message.warning("未设置工作空间路径");
       return;
+    }
+
+    // 先检查是否有 Git 凭据
+    try {
+      const creds = await invoke<{ username: string; token: string } | null>("get_git_credentials");
+      if (!creds) {
+        // 没有凭据，先显示凭据弹窗，保存后再执行
+        setPendingAction(() => () => {
+          if (confirm("确定要重新初始化工作空间吗？这将清空当前工作空间的内容。")) {
+            handleInitWorkspace(workspacePath);
+          }
+          setPendingAction(null);
+        });
+        setShowGitCredentialsModal(true);
+        return;
+      }
+    } catch {
+      // 忽略检查错误，继续执行
     }
 
     // 确认是否要重新初始化
@@ -356,6 +412,31 @@ function App() {
     if (!workspacePath) {
       Message.warning("未设置工作空间路径");
       return;
+    }
+
+    // 先检查是否有 Git 凭据
+    try {
+      const creds = await invoke<{ username: string; token: string } | null>("get_git_credentials");
+      if (!creds) {
+        // 没有凭据，先显示凭据弹窗，保存后再执行
+        setPendingAction(() => async () => {
+          try {
+            console.log('workspacePath', workspacePath);
+            const result = await invoke<string>("update_workspace", {
+              workspacePath,
+            });
+            Message.success(result);
+          } catch (error) {
+            Message.error(`更新仓库失败: ${error}`);
+          } finally {
+            setPendingAction(null);
+          }
+        });
+        setShowGitCredentialsModal(true);
+        return;
+      }
+    } catch {
+      // 忽略检查错误，继续执行
     }
 
     try {
@@ -548,6 +629,7 @@ function App() {
                 onChangeWorkspace={() => setShowWorkspaceModal(true)}
                 onReinitWorkspace={handleReinitWorkspace}
                 onUpdateWorkspace={handleUpdateWorkspace}
+                onGitCredentials={() => setShowGitCredentialsModal(true)}
                 hasWorkspace={!!workspacePath}
               />
             </Space>
@@ -742,6 +824,12 @@ function App() {
         onConfirm={handleWorkspaceConfirm}
         onInit={handleInitWorkspace}
         workspacePath={workspacePath}
+      />
+
+      <GitCredentialsModal
+        visible={showGitCredentialsModal}
+        onClose={handleGitCredentialsClose}
+        onSaved={handleGitCredentialsSaved}
       />
 
       <Modal

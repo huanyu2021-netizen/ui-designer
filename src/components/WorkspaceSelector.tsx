@@ -26,6 +26,7 @@ interface WorkspaceSelectorProps {
 function WorkspaceSelector({ visible, onConfirm, onInit, workspacePath }: WorkspaceSelectorProps) {
   const [selectedPath, setSelectedPath] = useState<string>('');
   const [validation, setValidation] = useState<WorkspaceValidation | null>(null);
+  const [isValidating, setIsValidating] = useState<boolean>(false);
 
   const validatePath = debounce(async (path: string): Promise<void> => {
     try {
@@ -66,6 +67,15 @@ function WorkspaceSelector({ visible, onConfirm, onInit, workspacePath }: Worksp
     }
   };
 
+  const handlePathInputChange = async (value: string): Promise<void> => {
+    setSelectedPath(value);
+    if (value.trim()) {
+      setIsValidating(true);
+      await validatePath(value);
+      setIsValidating(false);
+    }
+  };
+
   useEffect(() => {
     if (workspacePath) {
       setSelectedPath(workspacePath);
@@ -73,7 +83,21 @@ function WorkspaceSelector({ visible, onConfirm, onInit, workspacePath }: Worksp
     }
   }, [workspacePath]);
 
-  const handleConfirm = (): void => {
+  const handleConfirm = async (): Promise<void> => {
+    // 如果路径不存在，尝试创建
+    if (validation && !validation.valid && validation.error?.includes('不存在')) {
+      try {
+        await invoke('create_workspace_directory', { path: selectedPath });
+        Message.success('文件夹创建成功！');
+        // 重新验证
+        await validatePath(selectedPath);
+        return;
+      } catch (error) {
+        Message.error(`创建文件夹失败: ${error}`);
+        return;
+      }
+    }
+
     if (validation && validation.valid) {
       // 如果是空文件夹，触发初始化
       if (validation.is_empty && onInit) {
@@ -118,6 +142,22 @@ function WorkspaceSelector({ visible, onConfirm, onInit, workspacePath }: Worksp
       );
     }
 
+    // 如果路径不存在，显示创建提示
+    if (validation.error?.includes('不存在')) {
+      return (
+        <Alert
+          type="warning"
+          title="文件夹不存在"
+          content={
+            <div>
+              <p>{validation.error}</p>
+              <p style={{ marginTop: 8, color: '#999' }}>点击“确认选择”将自动创建此文件夹</p>
+            </div>
+          }
+        />
+      );
+    }
+
     return (
       <Alert
         type="error"
@@ -148,22 +188,25 @@ function WorkspaceSelector({ visible, onConfirm, onInit, workspacePath }: Worksp
         <Card className="path-selector-card">
           <Space direction="vertical" style={{ width: '100%' }} size="large">
             <div>
-              <Text bold>已选择的文件夹：</Text>
+              <Text bold>工作空间路径：</Text>
               <Input
                 value={selectedPath}
-                placeholder="点击下方按钮选择文件夹"
-                readOnly
+                placeholder="输入路径或点击右侧按钮选择文件夹"
+                onChange={handlePathInputChange}
                 addAfter={
                   <Button
                     type="outline"
                     icon={<IconFolder />}
                     onClick={handleSelectFolder}
                   >
-                    浏览文件夹
+                    浏览
                   </Button>
                 }
                 style={{ marginTop: 8 }}
               />
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                提示：可以直接输入路径，如果文件夹不存在会自动创建
+              </Text>
             </div>
 
             {renderValidationStatus()}
@@ -193,7 +236,7 @@ function WorkspaceSelector({ visible, onConfirm, onInit, workspacePath }: Worksp
                 <Button
                   type="primary"
                   size="large"
-                  disabled={!validation || !validation.valid}
+                  disabled={!validation || (!validation.valid && !validation.error?.includes('不存在'))}
                   onClick={handleConfirm}
                 >
                   确认选择

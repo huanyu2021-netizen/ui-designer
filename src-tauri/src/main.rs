@@ -1,20 +1,93 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod git_module;
+
 use serde::Serialize;
 use tauri::Manager;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio, Child, Stdio as StdioLib};
 use std::io::{self, BufRead, BufReader, Write};
 use std::time::Duration;
 use std::sync::Mutex;
 use chrono;
+use git_module::*;
+use serde::{Deserialize, Serialize as SerdeSerialize};
 
 // Windows 上隐藏 CMD 窗口的标志
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GitCredentials {
+    username: String,
+    token: String, // Using token instead of password for better security
+}
+
+// Get the path to credentials file
+fn get_credentials_path() -> Result<PathBuf, String> {
+    let mut path = std::env::current_dir()
+        .map_err(|e| format!("Failed to get current directory: {}", e))?;
+    path.push(".git_credentials.json");
+    Ok(path)
+}
+
+// Save Git credentials
+fn save_credentials(username: String, token: String) -> Result<(), String> {
+    let creds = GitCredentials { username, token };
+    let creds_path = get_credentials_path()?;
+
+    let creds_json = serde_json::to_string_pretty(&creds)
+        .map_err(|e| format!("Failed to serialize credentials: {}", e))?;
+
+    fs::write(&creds_path, creds_json)
+        .map_err(|e| format!("Failed to write credentials: {}", e))?;
+
+    // Set file permissions to read/write only by owner (Unix-like systems)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perm = fs::metadata(&creds_path)
+            .map_err(|e| format!("Failed to get metadata: {}", e))?
+            .permissions();
+        perm.set_mode(0o600); // Read/write for owner only
+        fs::set_permissions(&creds_path, perm)
+            .map_err(|e| format!("Failed to set permissions: {}", e))?;
+    }
+
+    Ok(())
+}
+
+// Load Git credentials
+fn load_credentials() -> Result<Option<GitCredentials>, String> {
+    let creds_path = get_credentials_path()?;
+
+    if !creds_path.exists() {
+        return Ok(None);
+    }
+
+    let creds_json = fs::read_to_string(&creds_path)
+        .map_err(|e| format!("Failed to read credentials: {}", e))?;
+
+    let creds: GitCredentials = serde_json::from_str(&creds_json)
+        .map_err(|e| format!("Failed to deserialize credentials: {}", e))?;
+
+    Ok(Some(creds))
+}
+
+// Clear saved credentials
+fn clear_credentials() -> Result<(), String> {
+    let creds_path = get_credentials_path()?;
+
+    if creds_path.exists() {
+        fs::remove_file(&creds_path)
+            .map_err(|e| format!("Failed to remove credentials file: {}", e))?;
+    }
+
+    Ok(())
+}
 
 // 在编译时嵌入 res 目录
 #[cfg(debug_assertions)]
@@ -29,6 +102,54 @@ fn create_silent_command(program: &str) -> Command {
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
     cmd
+}
+
+// 在 Unix 系统（包括 macOS）上查找命令的完整路径
+#[cfg(unix)]
+fn find_command(program: &str) -> Option<String> {
+    use std::env;
+
+    // 首先尝试从 PATH 中查找
+    if let Ok(path_var) = env::var("PATH") {
+        for path in env::split_paths(&path_var) {
+            let cmd_path = path.join(program);
+            if cmd_path.exists() {
+                return cmd_path.to_str().map(|s| s.to_string());
+            }
+        }
+    }
+
+    // macOS 常见的额外全局 npm 安装路径
+    let macos_extra_paths = [
+        format!("{}/.npm-global/bin/{}", env::var("HOME").unwrap_or_else(|_| "~".to_string()), program),
+        "/usr/local/bin".to_string(),
+        "/opt/homebrew/bin".to_string(), // Apple Silicon Mac
+        format!("/Users/{}/.npm-global/bin", env::var("USER").unwrap_or_else(|_| "unknown".to_string())),
+    ];
+
+    for base_path in macos_extra_paths.iter() {
+        let cmd_path = if base_path.ends_with(program) {
+            base_path.clone()
+        } else {
+            format!("{}/{}", base_path, program)
+        };
+
+        if std::path::Path::new(&cmd_path).exists() {
+            return Some(cmd_path);
+        }
+    }
+
+    None
+}
+
+// 创建不会弹出窗口的命令（Unix 版本，支持路径查找）
+#[cfg(unix)]
+fn create_command_with_path(program: &str) -> Command {
+    if let Some(full_path) = find_command(program) {
+        Command::new(&full_path)
+    } else {
+        Command::new(program)
+    }
 }
 
 // 解压嵌入的资源到指定目录
@@ -116,8 +237,7 @@ struct EnvironmentCheck {
     node_version_valid: bool,
     pnpm_installed: bool,
     pnpm_version: Option<String>,
-    git_installed: bool,
-    git_version: Option<String>,
+    git_embedded: bool,  // Git is now embedded
     claude_installed: bool,
     claude_version: Option<String>,
     missing_tools: Vec<String>,
@@ -133,9 +253,18 @@ fn check_environment() -> Result<EnvironmentCheck, String> {
             .arg("--version")
             .output()
     } else {
-        Command::new("node")
-            .arg("--version")
-            .output()
+        #[cfg(unix)]
+        {
+            create_command_with_path("node")
+                .arg("--version")
+                .output()
+        }
+        #[cfg(not(unix))]
+        {
+            Command::new("node")
+                .arg("--version")
+                .output()
+        }
     };
 
     let (node_installed, node_version, node_version_valid) = match node_result {
@@ -173,10 +302,19 @@ fn check_environment() -> Result<EnvironmentCheck, String> {
             .args(["/C", "pnpm", "--version"])
             .output()
     } else {
-        // On Unix-like systems
-        Command::new("pnpm")
-            .arg("--version")
-            .output()
+        // On Unix-like systems (including macOS)
+        #[cfg(unix)]
+        {
+            create_command_with_path("pnpm")
+                .arg("--version")
+                .output()
+        }
+        #[cfg(not(unix))]
+        {
+            Command::new("pnpm")
+                .arg("--version")
+                .output()
+        }
     };
 
     let (pnpm_installed, pnpm_version) = match pnpm_result {
@@ -195,32 +333,8 @@ fn check_environment() -> Result<EnvironmentCheck, String> {
         }
     };
 
-    // Check git
-    let git_result = if cfg!(windows) {
-        create_silent_command("git")
-            .arg("--version")
-            .output()
-    } else {
-        Command::new("git")
-            .arg("--version")
-            .output()
-    };
-
-    let (git_installed, git_version) = match git_result {
-        Ok(output) => {
-            if output.status.success() {
-                let version_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                (true, Some(version_str))
-            } else {
-                missing_tools.push("git".to_string());
-                (false, None)
-            }
-        }
-        Err(_) => {
-            missing_tools.push("git".to_string());
-            (false, None)
-        }
-    };
+    // Git is now embedded in the application
+    let git_embedded = true;
 
     // Check claude
     let claude_result = if cfg!(windows) {
@@ -229,10 +343,19 @@ fn check_environment() -> Result<EnvironmentCheck, String> {
             .args(["/C", "claude", "-v"])
             .output()
     } else {
-        // On Unix-like systems
-        Command::new("claude")
-            .arg("-v")
-            .output()
+        // On Unix-like systems (including macOS)
+        #[cfg(unix)]
+        {
+            create_command_with_path("claude")
+                .arg("-v")
+                .output()
+        }
+        #[cfg(not(unix))]
+        {
+            Command::new("claude")
+                .arg("-v")
+                .output()
+        }
     };
 
     let (claude_installed, claude_version) = match claude_result {
@@ -255,8 +378,7 @@ fn check_environment() -> Result<EnvironmentCheck, String> {
         node_version_valid,
         pnpm_installed,
         pnpm_version,
-        git_installed,
-        git_version,
+        git_embedded,
         claude_installed,
         claude_version,
         missing_tools,
@@ -319,49 +441,40 @@ async fn install_tool(tool_name: String, _window: tauri::Window) -> Result<Insta
             let result = if is_windows {
                 create_silent_command("cmd")
                     .args(["/C", "npm", "install", "-g", "pnpm"])
-                    .spawn()
+                    .output()
             } else {
                 Command::new("npm")
                     .args(["install", "-g", "pnpm"])
-                    .spawn()
+                    .output()
             };
 
             match result {
-                Ok(_) => Ok(InstallResult {
-                    success: true,
-                    message: "正在安装 pnpm...".to_string(),
-                    tool: tool_name,
-                }),
-                Err(_e) => {
+                Ok(output) => {
+                    if output.status.success() {
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        Ok(InstallResult {
+                            success: true,
+                            message: format!("pnpm 安装成功！\n{}", stdout.trim()),
+                            tool: tool_name,
+                        })
+                    } else {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        Err(format!("pnpm 安装失败: {}", stderr.trim()))
+                    }
+                }
+                Err(e) => {
                     // If npm is not available, open browser
                     let install_url = "https://pnpm.io/installation";
                     open_url(install_url)?;
 
                     Ok(InstallResult {
                         success: true,
-                        message: "已打开 pnpm 安装页面。请按照说明安装后刷新按钮重新检测。".to_string(),
+                        message: format!("npm 不可用，已打开 pnpm 安装页面。请按照说明安装后刷新按钮重新检测。\n错误: {}", e),
                         tool: tool_name,
                     })
                 }
             }
-        }
-        "Git" => {
-            // Open browser to download Git
-            let download_url = if is_windows {
-                "https://git-scm.com/download/win"
-            } else if is_macos {
-                "https://git-scm.com/download/mac"
-            } else {
-                "https://git-scm.com/downloads"
-            };
-
-            open_url(download_url)?;
-
-            Ok(InstallResult {
-                success: true,
-                message: "已打开 Git 下载页面。请下载安装后刷新按钮重新检测。".to_string(),
-                tool: tool_name,
-            })
         }
         _ => Err(format!("未知的工具: {}", tool_name)),
     }
@@ -403,13 +516,51 @@ async fn install_all_tools(_window: tauri::Window) -> Result<String, String> {
 
     open_url(download_url)?;
 
-    Ok("已打开 Node.js 下载页面。安装 Node.js 后，可以通过 npm 安装 pnpm (npm install -g pnpm)。Git 也可以从 https://git-scm.com/downloads 下载。".to_string())
+    Ok("已打开 Node.js 下载页面。安装 Node.js 后，可以通过 npm 安装 pnpm (npm install -g pnpm)。Git 已内置在应用中，无需单独安装。".to_string())
 }
 
 #[tauri::command]
 async fn select_workspace() -> Result<Option<String>, String> {
     // This will be handled by frontend using Tauri's dialog API
     Ok(None)
+}
+
+#[tauri::command]
+async fn create_workspace_directory(path: String) -> Result<String, String> {
+    let workspace = Path::new(&path);
+
+    // 检查路径是否已存在
+    if workspace.exists() {
+        return Err("路径已存在".to_string());
+    }
+
+    // 创建目录（包括所有父目录）
+    fs::create_dir_all(workspace)
+        .map_err(|e| format!("创建目录失败: {}", e))?;
+
+    Ok(format!("成功创建目录: {}", path))
+}
+
+#[tauri::command]
+async fn save_git_credentials(username: String, token: String) -> Result<String, String> {
+    if username.trim().is_empty() || token.trim().is_empty() {
+        return Err("用户名和 Token 不能为空".to_string());
+    }
+
+    save_credentials(username, token)?;
+
+    Ok("Git 凭据保存成功".to_string())
+}
+
+#[tauri::command]
+async fn get_git_credentials() -> Result<Option<GitCredentials>, String> {
+    load_credentials()
+}
+
+#[tauri::command]
+async fn clear_git_credentials() -> Result<String, String> {
+    clear_credentials()?;
+    Ok("Git 凭据已清除".to_string())
 }
 
 #[tauri::command]
@@ -578,12 +729,12 @@ async fn clone_main_repo(workspace_path: String) -> Result<String, String> {
         return Err("工作空间目录不为空且不是 git 仓库".to_string());
     }
 
-    // 克隆主仓库到工作空间
-    let output = execute_command_with_output(
-        "git",
-        &["clone", main_repo_url, "."],
-        workspace,
-    )?;
+    // 尝试使用保存的凭据克隆
+    let output = if let Ok(Some(creds)) = load_credentials() {
+        git_clone_with_auth(main_repo_url, workspace, &creds.username, &creds.token)?
+    } else {
+        git_clone(main_repo_url, workspace)?
+    };
 
     Ok(format!("成功克隆主仓库: {}", output))
 }
@@ -609,12 +760,12 @@ async fn clone_app_repo(workspace_path: String) -> Result<String, String> {
             .map_err(|e| format!("无法创建 apps 目录: {}", e))?;
     }
 
-    // 克隆应用仓库到 apps 目录
-    let output = execute_command_with_output(
-        "git",
-        &["clone", app_repo_url, "laiye-adp"],
-        &apps_dir,
-    )?;
+    // 尝试使用保存的凭据克隆
+    let output = if let Ok(Some(creds)) = load_credentials() {
+        git_clone_with_auth(app_repo_url, &app_dir, &creds.username, &creds.token)?
+    } else {
+        git_clone(app_repo_url, &app_dir)?
+    };
 
     // 创建新分支，命名为 ui-pages-{用户名}-{月}{日}
     let now = chrono::Local::now();
@@ -633,13 +784,9 @@ async fn clone_app_repo(workspace_path: String) -> Result<String, String> {
 
     let branch_name = format!("ui-pages-{}-{}", username, now.format("%m%d"));
 
-    let checkout_output = execute_command_with_output(
-        "git",
-        &["checkout", "-b", &branch_name],
-        &app_dir,
-    )?;
+    let checkout_output = git_checkout_branch(&app_dir, &branch_name)?;
 
-    Ok(format!("成功克隆应用仓库并创建分支 {}: {}\n分支: {}", branch_name, output, checkout_output))
+    Ok(format!("成功克隆应用仓库并创建分支 {}: {}\n{}", branch_name, output, checkout_output))
 }
 
 #[tauri::command]
@@ -793,70 +940,39 @@ async fn update_workspace(workspace_path: String) -> Result<String, String> {
     // 更新主仓库（workspace 已经指向 laiye-monorepo-scaffold 目录）
     let git_dir = workspace.join(".git");
     if git_dir.exists() {
-        let output = if cfg!(windows) {
-            create_silent_command("git")
-                .args(["pull", "origin", "master"])
-                .current_dir(workspace)
-                .output()
+        // 尝试使用保存的凭据更新
+        let output = if let Ok(Some(creds)) = load_credentials() {
+            git_pull_with_auth(workspace, "origin", "master", &creds.username, &creds.token)
         } else {
-            Command::new("git")
-                .args(["pull", "origin", "master"])
-                .current_dir(workspace)
-                .output()
+            git_pull(workspace, "origin", "master")
         };
 
         match output {
-            Ok(result) => {
-                if result.status.success() {
-                    let stdout = String::from_utf8_lossy(&result.stdout);
-                    let message = if stdout.trim().is_empty() {
-                        "主仓库已是最新".to_string()
+            Ok(message) => {
+                let main_message = message;
+
+                // 继续更新应用仓库
+                let app_repo = workspace.join("apps").join("laiye-adp");
+                let app_git = app_repo.join(".git");
+                if app_git.exists() {
+                    // 尝试使用保存的凭据更新应用仓库
+                    let app_output = if let Ok(Some(creds)) = load_credentials() {
+                        git_pull_with_auth(&app_repo, "origin", "master", &creds.username, &creds.token)
                     } else {
-                        format!("主仓库更新成功: {}", stdout.trim())
+                        git_pull(&app_repo, "origin", "master")
                     };
 
-                    // 继续更新应用仓库
-                    let app_repo = workspace.join("apps").join("laiye-adp");
-                    let app_git = app_repo.join(".git");
-                    if app_git.exists() {
-                        let app_output = if cfg!(windows) {
-                            create_silent_command("git")
-                                .args(["pull", "origin", "master"])
-                                .current_dir(&app_repo)
-                                .output()
-                        } else {
-                            Command::new("git")
-                                .args(["pull", "origin", "master"])
-                                .current_dir(&app_repo)
-                                .output()
-                        };
-
-                        match app_output {
-                            Ok(app_result) => {
-                                if app_result.status.success() {
-                                    let app_stdout = String::from_utf8_lossy(&app_result.stdout);
-                                    let app_message = if app_stdout.trim().is_empty() {
-                                        "应用仓库已是最新".to_string()
-                                    } else {
-                                        format!("应用仓库更新成功: {}", app_stdout.trim())
-                                    };
-                                    return Ok(format!("{}\n{}", message, app_message));
-                                } else {
-                                    let app_stderr = String::from_utf8_lossy(&app_result.stderr);
-                                    return Ok(format!("{}\n应用仓库更新失败: {}", message, app_stderr.trim()));
-                                }
-                            }
-                            Err(e) => return Ok(format!("{}\n应用仓库更新失败: {}", message, e)),
+                    match app_output {
+                        Ok(app_message) => {
+                            return Ok(format!("{}\n{}", main_message, app_message));
                         }
+                        Err(e) => return Ok(format!("{}\n应用仓库更新失败: {}", main_message, e)),
                     }
-
-                    return Ok(message);
-                } else {
-                    let stderr = String::from_utf8_lossy(&result.stderr);
-                    return Err(format!("主仓库更新失败: {}", stderr.trim()));
                 }
+
+                return Ok(main_message);
             }
-            Err(e) => return Err(format!("执行 git pull 失败: {}", e)),
+            Err(e) => return Err(format!("主仓库更新失败: {}", e)),
         }
     }
 
@@ -1021,29 +1137,8 @@ async fn get_app_branch(workspace_path: String) -> Result<Option<String>, String
         return Ok(None);
     }
 
-    let output = if cfg!(windows) {
-        create_silent_command("git")
-            .args(["branch", "--show-current"])
-            .current_dir(&app_dir)
-            .output()
-    } else {
-        Command::new("git")
-            .args(["branch", "--show-current"])
-            .current_dir(&app_dir)
-            .output()
-    };
-
-    match output {
-        Ok(result) => {
-            if result.status.success() {
-                let branch = String::from_utf8_lossy(&result.stdout).trim().to_string();
-                Ok(if branch.is_empty() { None } else { Some(branch) })
-            } else {
-                Ok(None)
-            }
-        }
-        Err(_) => Ok(None),
-    }
+    let branch = get_current_branch(&app_dir)?;
+    Ok(branch)
 }
 
 #[tauri::command]
@@ -1251,6 +1346,10 @@ fn main() {
             install_all_tools,
             select_workspace,
             validate_workspace,
+            create_workspace_directory,
+            save_git_credentials,
+            get_git_credentials,
+            clear_git_credentials,
             clone_main_repo,
             clone_app_repo,
             copy_resources,

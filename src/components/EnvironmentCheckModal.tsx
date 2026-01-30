@@ -13,8 +13,7 @@ interface EnvironmentCheck {
   node_version_valid: boolean;
   pnpm_installed: boolean;
   pnpm_version?: string;
-  git_installed: boolean;
-  git_version?: string;
+  git_embedded: boolean;  // Git is now embedded in the application
   claude_installed: boolean;
   claude_version?: string;
   missing_tools: string[];
@@ -26,6 +25,7 @@ interface ToolItem {
   version?: string;
   valid: boolean;
   required: string;
+  embedded?: boolean;  // 标记是否为内置工具
 }
 
 interface EnvironmentCheckModalProps {
@@ -37,6 +37,7 @@ interface EnvironmentCheckModalProps {
 function EnvironmentCheckModal({ visible, onConfirm, onCheckComplete }: EnvironmentCheckModalProps) {
   const [envCheck, setEnvCheck] = useState<EnvironmentCheck | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [installingTool, setInstallingTool] = useState<string | null>(null);
 
   const checkEnvironment = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -62,6 +63,7 @@ function EnvironmentCheckModal({ visible, onConfirm, onCheckComplete }: Environm
   }, [visible, checkEnvironment]);
 
   const handleInstallSingle = async (toolName: string): Promise<void> => {
+    setInstallingTool(toolName);
     try {
       const result = await invoke<{ message: string }>('install_tool', { toolName });
       Message.success(result.message);
@@ -71,6 +73,8 @@ function EnvironmentCheckModal({ visible, onConfirm, onCheckComplete }: Environm
       }, 1000);
     } catch (error) {
       Message.error(`安装 ${toolName} 失败: ${error}`);
+    } finally {
+      setInstallingTool(null);
     }
   };
 
@@ -112,10 +116,11 @@ function EnvironmentCheckModal({ visible, onConfirm, onCheckComplete }: Environm
             },
             {
               name: 'Git',
-              installed: envCheck.git_installed,
-              version: envCheck.git_version,
+              installed: envCheck.git_embedded,
+              version: '内置版本',
               valid: true,
-              required: '最新版本'
+              required: '已内置在应用中',
+              embedded: true  // 标记为内置工具
             },
             {
               name: 'Claude',
@@ -135,16 +140,25 @@ function EnvironmentCheckModal({ visible, onConfirm, onCheckComplete }: Environm
                     ? [<Button key="install" type="text" size="small" icon={<IconLink />} onClick={() => open('https://laiye-tech.feishu.cn/wiki/QS9qwKjAMiG4SmkFxquc1FUdnFg')}>
                         查看安装指南
                       </Button>]
-                    : [<Button key="install" type="primary" size="small" onClick={() => handleInstallSingle(item.name)}>
-                        安装 {item.name}
-                      </Button>]
+                    : !item.embedded ? [<Button
+                        key="install"
+                        type="primary"
+                        size="small"
+                        loading={installingTool === item.name}
+                        disabled={installingTool !== null}
+                        onClick={() => handleInstallSingle(item.name)}
+                      >
+                        {installingTool === item.name ? `正在安装 ${item.name}...` : `安装 ${item.name}`}
+                      </Button>] : undefined
                   : undefined
               }
             >
               <Space>
                 <span className="tool-name">{item.name}</span>
                 <span className="tool-required">({item.required})</span>
-                {item.installed && item.valid ? (
+                {item.embedded ? (
+                  <Text type="success">✓ 内置版本</Text>
+                ) : item.installed && item.valid ? (
                   <Text type="success">✓ 已安装 {item.version}</Text>
                 ) : item.installed && !item.valid ? (
                   <Text type="warning">⚠ 版本过低 {item.version}</Text>
