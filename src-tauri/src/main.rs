@@ -5,7 +5,7 @@ mod git_module;
 use serde::Serialize;
 use tauri::Manager;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio, Child, Stdio as StdioLib};
 use std::io::{self, BufRead, BufReader, Write};
 use std::time::Duration;
@@ -39,16 +39,20 @@ const EMBEDDED_RESOURCES: include_dir::Dir = include_dir::include_dir!("$CARGO_M
 
 // 创建不会弹出窗口的命令
 fn create_silent_command(program: &str) -> Command {
+    #[cfg(target_os = "windows")]
     let mut cmd = Command::new(program);
+    #[cfg(not(target_os = "windows"))]
+    let cmd = Command::new(program);
+
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
+
     cmd
 }
 
 // 在 Unix 系统（包括 macOS）上查找命令的完整路径
 #[cfg(unix)]
 fn find_command(program: &str) -> Option<String> {
-    use std::env;
     use std::process::Command;
 
     // 使用 which 命令来查找命令（会自动处理符号链接）
@@ -395,7 +399,6 @@ async fn install_tool(tool_name: String, _window: tauri::Window) -> Result<Insta
                     Ok(output) => {
                         if output.status.success() {
                             let stdout = String::from_utf8_lossy(&output.stdout);
-                            let stderr = String::from_utf8_lossy(&output.stderr);
 
                             // Check if pnpm is actually installed
                             let pnpm_check = create_command_with_path("pnpm")
@@ -404,7 +407,7 @@ async fn install_tool(tool_name: String, _window: tauri::Window) -> Result<Insta
 
                             match pnpm_check {
                                 Ok(check_output) if check_output.status.success() => {
-                                    let version = String::from_utf8_lossy(&check_output.stdout).trim();
+                                    let version = String::from_utf8_lossy(&check_output.stdout).trim().to_string();
                                     return Ok(InstallResult {
                                         success: true,
                                         message: format!("pnpm 安装成功！版本: {}\n\n提示: 如果 pnpm 仍然无法使用，请重启终端或应用。", version),
