@@ -1576,16 +1576,23 @@ fn main() {
 
             // Note: DevTools in Tauri requires enabling with a feature flag
             // For now, we'll use a simple JavaScript evaluation approach
-            if let Err(e) = manager.register(shortcut, {
+            match manager.register(shortcut, {
                 let window = window.clone();
                 move || {
                     // Try to use the inspect() function which is available in some webviews
                     let _ = window.eval("if (typeof window.inspect === 'function') { window.inspect(); }");
                 }
             }) {
-                eprintln!("Failed to register F12 shortcut: {}", e);
-            } else {
-                eprintln!("F12 shortcut registered successfully");
+                Ok(_) => {
+                    #[cfg(debug_assertions)]
+                    eprintln!("F12 shortcut registered successfully");
+                }
+                Err(_) => {
+                    // F12 shortcut registration failed (likely already registered by system)
+                    // This is not a critical error, just log it in debug mode
+                    #[cfg(debug_assertions)]
+                    eprintln!("Note: F12 global shortcut could not be registered (may be in use by system)");
+                }
             }
 
             Ok(())

@@ -1,0 +1,30 @@
+import { LYBaseTenantApp } from '../../base';
+import { LYSessionApi } from '../api/session';
+import type { SSOConfig } from '../api/session';
+import { LYUserApi } from '../api/user';
+import type { LYBaseAuthorizer } from '../authorizer/base';
+import { LYLicenseApi } from '../api/license';
+import { LYCrypto } from '../../../crypto';
+import { LYOEMApi } from '../api/oem';
+import { LYVerificationCodesApi } from '../api/verificationCodes';
+declare class LYOrganizationApp extends LYBaseTenantApp {
+    static _instance?: LYOrganizationApp;
+    private _sessionApi;
+    private _userApi;
+    private _licenseApi;
+    private _authorizers;
+    private _oemApi;
+    private _verificationCodesApi;
+    constructor(name: string, version: string, description: string);
+    static get instance(): LYOrganizationApp;
+    get sessionApi(): LYSessionApi;
+    get userApi(): LYUserApi;
+    get oemApi(): LYOEMApi;
+    get licenseApi(): LYLicenseApi;
+    get crypto(): LYCrypto;
+    get verificationCodesApi(): LYVerificationCodesApi;
+    protected doLoad(): Promise<void>;
+    private mergeOEM;
+    getAuthorizer<T extends LYBaseAuthorizer = LYBaseAuthorizer>(name?: string): T;
+}
+export { LYOrganizationApp, SSOConfig };

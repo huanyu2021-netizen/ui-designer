@@ -8,7 +8,7 @@ src-tauri/target/
 src-tauri/Cargo.lock
 
 # Build outputs
-dist/
+/dist/
 dist-ssr/
 *.dmg
 *.exe
