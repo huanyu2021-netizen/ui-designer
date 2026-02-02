@@ -55,7 +55,23 @@ fn create_silent_command(program: &str) -> Command {
 fn find_command(program: &str) -> Option<String> {
     use std::process::Command;
 
-    // 使用 which 命令来查找命令（会自动处理符号链接）
+    // 方法 1: 对于 npm/pnpm 等与 node 相关的命令，先找到 node 的位置
+    if program == "npm" || program == "pnpm" || program == "npx" || program == "corepack" {
+        if let Some(node_path) = find_command("node") {
+            if let Some(node_bin_dir) = std::path::Path::new(&node_path).parent() {
+                let target_path = node_bin_dir.join(program);
+                if target_path.exists() {
+                    if let Some(path_str) = target_path.to_str() {
+                        #[cfg(debug_assertions)]
+                        eprintln!("find_command({}): found via node location: {}", program, path_str);
+                        return Some(path_str.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // 方法 2: 使用 which 命令来查找命令（会自动处理符号链接）
     let result = Command::new("which")
         .arg(program)
         .output();
@@ -64,26 +80,239 @@ fn find_command(program: &str) -> Option<String> {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !path.is_empty() {
+                #[cfg(debug_assertions)]
+                eprintln!("find_command({}): found via which: {}", program, path);
                 return Some(path);
             }
         }
     }
 
-    // 如果 which 失败，检查常见的安装路径
+    // 方法 3: 直接使用用户的 shell 来查找（加载 shell 配置文件）
+    if let Ok(shell) = std::env::var("SHELL") {
+        let shell_result = Command::new(&shell)
+            .arg("-lc")
+            .arg(format!("command -v {}", program))
+            .output();
+
+        if let Ok(output) = shell_result {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !path.is_empty() {
+                    #[cfg(debug_assertions)]
+                    eprintln!("find_command({}): found via shell {}: {}", program, shell, path);
+                    return Some(path);
+                }
+            }
+        }
+    }
+
+    // 方法 4: 检查常见的安装路径
     let common_paths = [
         format!("/usr/local/bin/{}", program),
         format!("/opt/homebrew/bin/{}", program),
         format!("/usr/bin/{}", program),
         format!("/bin/{}", program),
+        format!("/usr/local/opt/node@20/bin/{}", program),  // Homebrew Node.js
+        format!("/usr/local/opt/node/bin/{}", program),      // Homebrew Node.js (generic)
     ];
 
-    for path in common_paths {
-        if std::path::Path::new(&path).exists() {
-            return Some(path);
+    for path in &common_paths {
+        if std::path::Path::new(path).exists() {
+            #[cfg(debug_assertions)]
+            eprintln!("find_command({}): found in common paths: {}", program, path);
+            return Some(path.clone());
         }
     }
 
+    // 方法 5: 检查 nvm 安装路径（对于 GUI 应用，PATH 中可能不包含 nvm）
+    if let Ok(home) = std::env::var("HOME") {
+        let nvm_base = std::path::Path::new(&home).join(".nvm/versions/node");
+
+        #[cfg(debug_assertions)]
+        eprintln!("find_command({}): checking nvm base: {:?}", program, nvm_base);
+
+        // 检查 nvm 目录是否存在
+        if let Ok(entries) = std::fs::read_dir(&nvm_base) {
+            // 收集所有找到的版本
+            let mut found_versions: Vec<String> = Vec::new();
+
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_dir() {
+                        let version_path = entry.path();
+                        let bin_path = version_path.join("bin").join(program);
+
+                        #[cfg(debug_assertions)]
+                        eprintln!("find_command({}): checking bin path: {:?}", program, bin_path);
+
+                        // 检查命令是否存在
+                        if bin_path.exists() {
+                            if let Some(path_str) = bin_path.to_str() {
+                                found_versions.push(path_str.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 返回第一个找到的
+            if let Some(path) = found_versions.first() {
+                #[cfg(debug_assertions)]
+                eprintln!("find_command({}): found in nvm: {}", program, path);
+                return Some(path.clone());
+            }
+        }
+
+        // 方法 6: 检查 .npm-global (npm 全局安装路径)
+        let npm_global_bin = std::path::Path::new(&home).join(".npm-global/bin").join(program);
+        if npm_global_bin.exists() {
+            if let Some(path_str) = npm_global_bin.to_str() {
+                #[cfg(debug_assertions)]
+                eprintln!("find_command({}): found in .npm-global: {}", program, path_str);
+                return Some(path_str.to_string());
+            }
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    eprintln!("find_command({}): not found", program);
     None
+}
+
+// 通过用户的 shell 执行命令（继承用户环境）
+#[cfg(unix)]
+fn execute_via_shell(command: &str) -> Result<std::process::Output, std::io::Error> {
+    use std::process::Command;
+    use std::path::Path;
+
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+
+    // 构建环境变量，确保包含必要的路径
+    let mut cmd = Command::new(&shell);
+    cmd.arg("-lc");
+
+    // 设置必要的环境变量
+    if let Ok(home) = std::env::var("HOME") {
+        // 设置 HOME 环境变量
+        cmd.env("HOME", &home);
+
+        // 构建 PATH：系统路径 + nvm 路径 + 当前 PATH
+        let mut path_entries = Vec::new();
+
+        // 添加 nvm 路径
+        let nvm_dir = Path::new(&home).join(".nvm");
+        if nvm_dir.exists() {
+            // 添加 nvm 本身
+            if let Some(nvm_str) = nvm_dir.to_str() {
+                path_entries.push(nvm_str.to_string());
+            }
+            // 添加所有 node 版本的 bin 目录
+            let versions_dir = nvm_dir.join("versions/node");
+            if let Ok(entries) = std::fs::read_dir(&versions_dir) {
+                for entry in entries.flatten() {
+                    if let Ok(file_type) = entry.file_type() {
+                        if file_type.is_dir() {
+                            let bin_dir = entry.path().join("bin");
+                            if let Some(bin_str) = bin_dir.to_str() {
+                                path_entries.push(bin_str.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 添加系统路径
+        path_entries.push("/usr/local/bin".to_string());
+        path_entries.push("/opt/homebrew/bin".to_string());
+        path_entries.push("/usr/bin".to_string());
+        path_entries.push("/bin".to_string());
+
+        // 添加当前 PATH
+        if let Ok(current_path) = std::env::var("PATH") {
+            path_entries.push(current_path);
+        }
+
+        // 去重
+        let unique_paths: std::collections::HashSet<String> = path_entries.into_iter().collect();
+        let full_path = unique_paths.into_iter().collect::<Vec<_>>().join(":");
+
+        cmd.env("PATH", full_path);
+    }
+
+    #[cfg(debug_assertions)]
+    eprintln!("execute_via_shell: shell={}, command={}, PATH={:?}",
+        shell,
+        command,
+        std::env::var("PATH").unwrap_or_else(|_| "not set".to_string())
+    );
+
+    let result = cmd.arg(command).output();
+
+    #[cfg(debug_assertions)]
+    match &result {
+        Ok(output) => {
+            eprintln!("execute_via_shell result: status={}, stdout={}, stderr={}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Err(e) => {
+            eprintln!("execute_via_shell error: {}", e);
+        }
+    }
+
+    result
+}
+
+// 备用方法：直接读取用户的 shell 配置文件获取 PATH
+#[cfg(unix)]
+fn get_user_path() -> String {
+    use std::process::Command;
+    use std::path::Path;
+
+    let mut paths = Vec::new();
+
+    // 添加系统默认 PATH
+    if let Ok(current_path) = std::env::var("PATH") {
+        paths.push(current_path);
+    }
+
+    // 添加常见路径
+    paths.push("/usr/local/bin".to_string());
+    paths.push("/opt/homebrew/bin".to_string());
+    paths.push("/usr/bin".to_string());
+    paths.push("/bin".to_string());
+
+    // 添加 nvm 路径
+    if let Ok(home) = std::env::var("HOME") {
+        let nvm_base = Path::new(&home).join(".nvm/versions/node");
+        if let Ok(entries) = std::fs::read_dir(&nvm_base) {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_dir() {
+                        let bin_path = entry.path().join("bin");
+                        if let Some(path_str) = bin_path.to_str() {
+                            paths.push(path_str.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // 添加 npm 全局路径
+        let npm_global = Path::new(&home).join(".npm-global/bin");
+        if npm_global.exists() {
+            if let Some(path_str) = npm_global.to_str() {
+                paths.push(path_str.to_string());
+            }
+        }
+    }
+
+    // 去重并连接
+    let unique_paths: std::collections::HashSet<String> = paths.into_iter().collect();
+    unique_paths.into_iter().collect::<Vec<_>>().join(":")
 }
 
 // 创建不会弹出窗口的命令（Unix 版本）
@@ -93,7 +322,27 @@ fn find_command(program: &str) -> Option<String> {
 fn create_command_with_path(program: &str) -> Command {
     // 尝试使用 find_command 获取完整路径
     if let Some(path) = find_command(program) {
-        Command::new(path)
+        let mut cmd = Command::new(&path);
+        // 设置包含 nvm 的 PATH，以便子进程也能找到依赖
+        if let Ok(home) = std::env::var("HOME") {
+            let nvm_base = std::path::Path::new(&home).join(".nvm/versions/node");
+            if let Ok(entries) = std::fs::read_dir(&nvm_base) {
+                for entry in entries.flatten() {
+                    if let Ok(file_type) = entry.file_type() {
+                        if file_type.is_dir() {
+                            let bin_path = entry.path().join("bin");
+                            if let Some(bin_str) = bin_path.to_str() {
+                                if let Ok(current_path) = std::env::var("PATH") {
+                                    cmd.env("PATH", format!("{}:{}", bin_str, current_path));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        cmd
     } else {
         // 如果找不到，回退到使用命令名，依赖系统的 PATH
         Command::new(program)
@@ -195,7 +444,7 @@ struct EnvironmentCheck {
 fn check_environment() -> Result<EnvironmentCheck, String> {
     let mut missing_tools = Vec::new();
 
-    // Check Node.js (version >= 20)
+    // Check Node.js - 直接使用 shell 执行 node -v
     let node_result = if cfg!(windows) {
         create_silent_command("node")
             .arg("--version")
@@ -203,9 +452,7 @@ fn check_environment() -> Result<EnvironmentCheck, String> {
     } else {
         #[cfg(unix)]
         {
-            create_command_with_path("node")
-                .arg("--version")
-                .output()
+            execute_via_shell("node -v")
         }
         #[cfg(not(unix))]
         {
@@ -243,19 +490,15 @@ fn check_environment() -> Result<EnvironmentCheck, String> {
         }
     };
 
-    // Check pnpm (try multiple methods)
+    // Check pnpm - 直接使用 shell 执行 pnpm -v
     let pnpm_result = if cfg!(windows) {
-        // On Windows, try using cmd to call pnpm
         create_silent_command("cmd")
             .args(["/C", "pnpm", "--version"])
             .output()
     } else {
-        // On Unix-like systems (including macOS)
         #[cfg(unix)]
         {
-            create_command_with_path("pnpm")
-                .arg("--version")
-                .output()
+            execute_via_shell("pnpm -v")
         }
         #[cfg(not(unix))]
         {
@@ -284,19 +527,15 @@ fn check_environment() -> Result<EnvironmentCheck, String> {
     // Git is now embedded in the application
     let git_embedded = true;
 
-    // Check claude
+    // Check claude - 直接使用 shell 执行 claude -v
     let claude_result = if cfg!(windows) {
-        // On Windows, try using cmd to call claude
         create_silent_command("cmd")
             .args(["/C", "claude", "-v"])
             .output()
     } else {
-        // On Unix-like systems (including macOS)
         #[cfg(unix)]
         {
-            create_command_with_path("claude")
-                .arg("-v")
-                .output()
+            execute_via_shell("claude -v")
         }
         #[cfg(not(unix))]
         {
@@ -385,14 +624,49 @@ async fn install_tool(tool_name: String, _window: tauri::Window) -> Result<Insta
             })
         }
         "pnpm" => {
-            // Get the current system PATH to include nvm and other custom paths
-            let system_path = std::env::var("PATH").unwrap_or_else(|_| {
-                if cfg!(target_os = "macos") {
-                    "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:/usr/sbin:/sbin".to_string()
-                } else {
-                    "/usr/bin:/bin:/usr/local/bin:/usr/sbin:/sbin".to_string()
+            // Build enhanced PATH that includes nvm and other common paths
+            let enhanced_path = {
+                let mut paths = Vec::new();
+
+                // Add current PATH
+                if let Ok(current_path) = std::env::var("PATH") {
+                    paths.push(current_path);
                 }
-            });
+
+                // Add nvm paths (for GUI apps that don't load shell config)
+                if let Ok(home) = std::env::var("HOME") {
+                    // Add nvm default structure
+                    let nvm_versions = std::path::Path::new(&home).join(".nvm/versions/node");
+
+                    if let Ok(entries) = std::fs::read_dir(&nvm_versions) {
+                        for entry in entries.flatten() {
+                            if let Ok(file_type) = entry.file_type() {
+                                if file_type.is_dir() {
+                                    let bin_path = entry.path().join("bin");
+                                    if let Some(path_str) = bin_path.to_str() {
+                                        paths.push(path_str.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Add common system paths (if not already present)
+                let system_paths = if cfg!(target_os = "macos") {
+                    vec!["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+                } else {
+                    vec!["/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+                };
+
+                for sys_path in system_paths {
+                    if !paths.iter().any(|p| p.contains(sys_path)) {
+                        paths.push(sys_path.to_string());
+                    }
+                }
+
+                paths.join(":")
+            };
 
             // On macOS, prefer npm install over standalone script for better nvm compatibility
             #[cfg(target_os = "macos")]
@@ -400,7 +674,7 @@ async fn install_tool(tool_name: String, _window: tauri::Window) -> Result<Insta
                 // Try npm install first (more reliable with nvm)
                 let npm_result = create_command_with_path("npm")
                     .args(["install", "-g", "pnpm"])
-                    .env("PATH", &system_path)
+                    .env("PATH", &enhanced_path)
                     .output();
 
                 match npm_result {
@@ -408,7 +682,7 @@ async fn install_tool(tool_name: String, _window: tauri::Window) -> Result<Insta
                         // Check if pnpm is actually installed
                         let pnpm_check = create_command_with_path("pnpm")
                             .arg("--version")
-                            .env("PATH", &system_path)
+                            .env("PATH", &enhanced_path)
                             .output();
 
                         match pnpm_check {
@@ -437,7 +711,7 @@ async fn install_tool(tool_name: String, _window: tauri::Window) -> Result<Insta
                         let install_result = Command::new("sh")
                             .arg("-c")
                             .arg("curl -fsSL https://get.pnpm.io/install.sh | sh -s --")
-                            .env("PATH", &system_path)
+                            .env("PATH", &enhanced_path)
                             .output();
 
                         match install_result {
@@ -445,7 +719,7 @@ async fn install_tool(tool_name: String, _window: tauri::Window) -> Result<Insta
                                 // Check if pnpm is actually installed
                                 let pnpm_check = create_command_with_path("pnpm")
                                     .arg("--version")
-                                    .env("PATH", &system_path)
+                                    .env("PATH", &enhanced_path)
                                     .output();
 
                                 match pnpm_check {
@@ -503,7 +777,7 @@ async fn install_tool(tool_name: String, _window: tauri::Window) -> Result<Insta
                     {
                         create_command_with_path("npm")
                             .args(["install", "-g", "pnpm"])
-                            .env("PATH", &system_path)
+                            .env("PATH", &enhanced_path)
                             .output()
                     }
                     #[cfg(not(unix))]
