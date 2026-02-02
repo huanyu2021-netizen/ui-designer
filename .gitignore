@@ -34,12 +34,6 @@ ADP-UI-*/
 Thumbs.db
 desktop.ini
 
-# Environment files
-.env
-.env.local
-.env.*.local
-!.env.example
-
 # Logs
 npm-debug.log*
 yarn-debug.log*
