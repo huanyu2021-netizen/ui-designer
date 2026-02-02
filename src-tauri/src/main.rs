@@ -385,96 +385,95 @@ async fn install_tool(tool_name: String, _window: tauri::Window) -> Result<Insta
             })
         }
         "pnpm" => {
-            // On macOS, prefer standalone install script over npm
+            // Get the current system PATH to include nvm and other custom paths
+            let system_path = std::env::var("PATH").unwrap_or_else(|_| {
+                if cfg!(target_os = "macos") {
+                    "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:/usr/sbin:/sbin".to_string()
+                } else {
+                    "/usr/bin:/bin:/usr/local/bin:/usr/sbin:/sbin".to_string()
+                }
+            });
+
+            // On macOS, prefer npm install over standalone script for better nvm compatibility
             #[cfg(target_os = "macos")]
             {
-                // Try standalone pnpm install script first
-                let install_result = Command::new("sh")
-                    .arg("-c")
-                    .arg("curl -fsSL https://get.pnpm.io/install.sh | sh -s -- --force")
-                    .env("PATH", "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:/usr/sbin:/sbin")
+                // Try npm install first (more reliable with nvm)
+                let npm_result = create_command_with_path("npm")
+                    .args(["install", "-g", "pnpm"])
+                    .env("PATH", &system_path)
                     .output();
 
-                match install_result {
-                    Ok(output) => {
-                        if output.status.success() {
-                            let stdout = String::from_utf8_lossy(&output.stdout);
+                match npm_result {
+                    Ok(output) if output.status.success() => {
+                        // Check if pnpm is actually installed
+                        let pnpm_check = create_command_with_path("pnpm")
+                            .arg("--version")
+                            .env("PATH", &system_path)
+                            .output();
 
-                            // Check if pnpm is actually installed
-                            let pnpm_check = create_command_with_path("pnpm")
-                                .arg("--version")
-                                .output();
-
-                            match pnpm_check {
-                                Ok(check_output) if check_output.status.success() => {
-                                    let version = String::from_utf8_lossy(&check_output.stdout).trim().to_string();
-                                    return Ok(InstallResult {
-                                        success: true,
-                                        message: format!("pnpm 安装成功！版本: {}\n\n提示: 如果 pnpm 仍然无法使用，请重启终端或应用。", version),
-                                        tool: tool_name,
-                                    });
-                                }
-                                _ => {
-                                    // Install script ran but pnpm still not found
-                                    let install_url = "https://pnpm.io/installation";
-                                    let _ = open_url(install_url);
-                                    return Ok(InstallResult {
-                                        success: false,
-                                        message: format!(
-                                            "安装脚本执行完成，但 pnpm 仍不可用。\n\n{}\n\n{}\n\n已打开安装页面，请查看详细说明。",
-                                            stdout.trim(),
-                                            "可能需要手动设置 PATH 或重启应用。"
-                                        ),
-                                        tool: tool_name,
-                                    });
-                                }
+                        match pnpm_check {
+                            Ok(check_output) if check_output.status.success() => {
+                                let version = String::from_utf8_lossy(&check_output.stdout).trim().to_string();
+                                return Ok(InstallResult {
+                                    success: true,
+                                    message: format!("pnpm 安装成功！版本: {}", version),
+                                    tool: tool_name,
+                                });
                             }
-                        } else {
-                            let stderr = String::from_utf8_lossy(&output.stderr);
-                            // Try npm install as fallback
-                            let npm_result = create_command_with_path("npm")
-                                .args(["install", "-g", "pnpm"])
-                                .env("PATH", "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:/usr/sbin:/sbin")
-                                .output();
-
-                            match npm_result {
-                                Ok(npm_output) if npm_output.status.success() => {
-                                    let stdout = String::from_utf8_lossy(&npm_output.stdout);
-                                    return Ok(InstallResult {
-                                        success: true,
-                                        message: format!("pnpm 通过 npm 安装成功！\n{}", stdout.trim()),
-                                        tool: tool_name,
-                                    });
-                                }
-                                _ => {
-                                    // Both methods failed, open documentation
-                                    let install_url = "https://pnpm.io/installation";
-                                    let _ = open_url(install_url);
-                                    return Ok(InstallResult {
-                                        success: false,
-                                        message: format!(
-                                            "pnpm 安装失败。\n\n独立脚本安装错误:\n{}\n\n已打开 pnpm 安装页面。",
-                                            stderr.trim()
-                                        ),
-                                        tool: tool_name,
-                                    });
-                                }
+                            _ => {
+                                // npm install succeeded but pnpm not found (PATH issue)
+                                let install_url = "https://pnpm.io/installation";
+                                let _ = open_url(install_url);
+                                return Ok(InstallResult {
+                                    success: false,
+                                    message: "pnpm 已安装，但当前 PATH 中找不到。\n\n请重启应用或手动添加 pnpm 到 PATH。\n\n已打开安装页面，请查看详细说明。".to_string(),
+                                    tool: tool_name,
+                                });
                             }
                         }
                     }
-                    Err(e) => {
-                        // Try npm install as fallback
-                        let npm_result = create_command_with_path("npm")
-                            .args(["install", "-g", "pnpm"])
-                            .env("PATH", "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:/usr/sbin:/sbin")
+                    _ => {
+                        // npm install failed, try standalone install script
+                        let install_result = Command::new("sh")
+                            .arg("-c")
+                            .arg("curl -fsSL https://get.pnpm.io/install.sh | sh -s --")
+                            .env("PATH", &system_path)
                             .output();
 
-                        match npm_result {
-                            Ok(npm_output) if npm_output.status.success() => {
-                                let stdout = String::from_utf8_lossy(&npm_output.stdout);
+                        match install_result {
+                            Ok(output) if output.status.success() => {
+                                // Check if pnpm is actually installed
+                                let pnpm_check = create_command_with_path("pnpm")
+                                    .arg("--version")
+                                    .env("PATH", &system_path)
+                                    .output();
+
+                                match pnpm_check {
+                                    Ok(check_output) if check_output.status.success() => {
+                                        let version = String::from_utf8_lossy(&check_output.stdout).trim().to_string();
+                                        return Ok(InstallResult {
+                                            success: true,
+                                            message: format!("pnpm 安装成功！版本: {}", version),
+                                            tool: tool_name,
+                                        });
+                                    }
+                                    _ => {
+                                        let install_url = "https://pnpm.io/installation";
+                                        let _ = open_url(install_url);
+                                        return Ok(InstallResult {
+                                            success: false,
+                                            message: "安装脚本执行完成，但 pnpm 仍不可用。\n\n可能需要重启应用或手动设置 PATH。\n\n已打开安装页面，请查看详细说明。".to_string(),
+                                            tool: tool_name,
+                                        });
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                let install_url = "https://pnpm.io/installation";
+                                let _ = open_url(install_url);
                                 return Ok(InstallResult {
-                                    success: true,
-                                    message: format!("pnpm 通过 npm 安装成功！\n{}", stdout.trim()),
+                                    success: false,
+                                    message: format!("pnpm 安装失败: {}\n\n已打开安装页面，请查看详细说明。", e),
                                     tool: tool_name,
                                 });
                             }
@@ -483,10 +482,7 @@ async fn install_tool(tool_name: String, _window: tauri::Window) -> Result<Insta
                                 let _ = open_url(install_url);
                                 return Ok(InstallResult {
                                     success: false,
-                                    message: format!(
-                                        "无法执行安装脚本。\n\n错误: {}\n\n已打开 pnpm 安装页面。",
-                                        e
-                                    ),
+                                    message: "pnpm 安装失败。\n\n已打开安装页面，请查看详细说明。".to_string(),
                                     tool: tool_name,
                                 });
                             }
@@ -507,7 +503,7 @@ async fn install_tool(tool_name: String, _window: tauri::Window) -> Result<Insta
                     {
                         create_command_with_path("npm")
                             .args(["install", "-g", "pnpm"])
-                            .env("PATH", "/usr/bin:/bin:/usr/local/bin:/usr/sbin:/sbin")
+                            .env("PATH", &system_path)
                             .output()
                     }
                     #[cfg(not(unix))]
